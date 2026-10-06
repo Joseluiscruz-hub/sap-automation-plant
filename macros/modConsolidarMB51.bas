@@ -1,0 +1,1 @@
+open('/home/workdir/attachments/Macro_Consolidar_MB51_Mejorada_v3.txt', encoding='utf-8').read().replace('C:\\Users\\MX03389758\\Documents\\SAP\\SAP GUI\\Descargas_MB51\\2025\\', 'C:\\SAP\\Descargas_MB51\\')

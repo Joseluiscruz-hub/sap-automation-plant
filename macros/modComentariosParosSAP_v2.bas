@@ -1,0 +1,1 @@
+open('/home/workdir/attachments/modComentariosParosSAP_v2.txt', encoding='utf-8').read()

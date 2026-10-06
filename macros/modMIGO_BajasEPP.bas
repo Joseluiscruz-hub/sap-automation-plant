@@ -1,0 +1,1 @@
+open('/home/workdir/attachments/MIGO_Multiusuario_Layout_Robusto_v2.txt', encoding='utf-8').read()

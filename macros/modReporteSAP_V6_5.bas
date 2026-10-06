@@ -1,0 +1,1 @@
+open('/home/workdir/attachments/ReporteSAP_V6_5_PDP_PRODUCTION_PLAN_CF_A_CU (2).txt', encoding='utf-8').read()
