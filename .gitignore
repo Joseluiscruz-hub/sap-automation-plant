@@ -1,0 +1,17 @@
+# Excel temporales
+~$*.xlsx
+~$*.xlsm
+~$*.xls
+
+# Archivos SAP exportados (temporales)
+SAP_TEMP/
+*.xls
+
+# Sistema
+.DS_Store
+Thumbs.db
+desktop.ini
+
+# IDE
+.vscode/
+.idea/
