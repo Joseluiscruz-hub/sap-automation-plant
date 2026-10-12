@@ -9,11 +9,18 @@ Automatiza la operación diaria de una planta de producción: eficiencia, paros 
 ```
 sap-automation-plant/
 ├── README.md
-└── macros/
-    ├── modReporteSAP_V6_5.bas        ← reporte de eficiencia completo (4,678 líneas)
-    ├── modMIGO_BajasEPP.bas          ← bajas de EPP en MIGO (901 líneas)
-    ├── modComentariosParosSAP_v2.bas ← comentarios TOP 3 de paros (791 líneas)
-    └── modConsolidarMB51.bas         ← consolidador de exportaciones MB51 (717 líneas)
+├── macros/
+│   ├── modReporteSAP_V6_5.bas        ← reporte de eficiencia completo
+│   ├── modMIGO_BajasEPP.bas          ← bajas de EPP en MIGO, v3 (~1,100 líneas)
+│   ├── modCorreosNotasCredito.bas    ← correos masivos de notas de crédito, v3 (~1,180 líneas)
+│   ├── modComentariosParosSAP_v2.bas ← comentarios TOP 3 de paros
+│   └── modConsolidarMB51.bas         ← consolidador de exportaciones MB51
+├── docs/
+│   ├── layout-bajas-epp.md           ← hojas, columnas, CONFIG y estados
+│   └── layout-correos-notas-credito.md
+└── samples/                          ← CSV con datos ficticios para armar los libros
+    ├── bajas-epp/
+    └── correos-notas-credito/
 ```
 
 ## Módulos
@@ -33,19 +40,35 @@ También genera la hoja PAROS_AGRUPADOS con validación de 1,440 minutos por lí
 
 **API pública:** V6_ActualizarReporteCompletoSAP, V6_ActualizarSoloREP2SAP, V6_ActualizarSoloAgo26SAP, V6_ActualizarSoloPDPDesdeCarpeta, V6_ActualizarSoloComentariosSAP, V6_ProbarConexionSAPMinima, V6_DiagnosticarSAPGUI, LimpiarCamposAutomaticos.
 
-### modMIGO_BajasEPP.bas — Bajas de EPP en MIGO
+### modMIGO_BajasEPP.bas — Bajas de EPP en MIGO (v3)
 
-Captura en lote las bajas de equipo de protección personal en MIGO (movimiento 201, salida de mercancías a centro de costo).
+Captura en lote las bajas de equipo de protección personal en MIGO (A07 / R10 / movimiento 201, salida a centro de costo) a partir del export de la app de EPP.
 
-- Lee la hoja BAJAS_SAP: la plataforma exporta CSV, se pega en PEGAR_APP y las fórmulas llenan BAJAS_SAP.
-- Valida material, cantidad, centro de costo, destinatario y texto antes de procesar.
-- Abre MIGO **una sola vez**, captura todas las filas LISTO y verifica al final.
-- Busca columnas por nombre técnico (GOITEM-MATNR, GOITEM-KOSTL...) en lugar de posiciones fijas.
-- `Normalizar_Layout_MIGO` reordena el layout si faltan columnas.
-- Escribe STATUS_SAP, MENSAJE_SAP, FECHA_PROCESO y DOC_MATERIAL_SAP por fila, y registra todo en LOG_SAP.
-- Modo seguro: verifica, no contabiliza.
+- **Sin desfase de filas:** `Preparar_Bajas_Desde_App` lee PEGAR_APP en arreglos y escribe BAJAS_SAP como valores, sin fórmulas. Si los conteos no cuadran, Validar y Procesar se detienen.
+- **Cabecera desde CONFIG:** operación, referencia, movimiento 201, centro y almacén. No hay valores de planta en el código.
+- **Sesión correcta:** valida el ID de sistema y el mandante contra CONFIG antes de tocar SAP. La espera de SAP tiene tiempo límite.
+- **Mensajes por fila:** lee la barra de estado y las ventanas emergentes *antes* de cerrarlas. Una línea rechazada se retira de MIGO y queda en `ERROR` con su mensaje.
+- **Estados honestos:** un mensaje vacío deja la fila en `REVISAR`. Si la verificación pasa, la fila queda en `VERIFICADO_SIN_CONTABILIZAR`, que no bloquea el reproceso. Solo `CONTABILIZADO`, con documento, se omite.
+- **Seguridad:** `MODO = SIMULACION` (dry-run, no se conecta a SAP) o `VERIFICAR`. **Nunca contabiliza.** La contabilización se hace a mano y se registra con `Registrar_Contabilizacion_Manual`.
+- Columnas de MIGO por nombre técnico (GOITEM-MATNR, GOITEM-KOSTL…). Manejo de errores por fila con `Resume`, bitácora en LOG_SAP, y ScreenUpdating/Calculation siempre restaurados.
 
-**API pública:** Validar_Bajas_EPP, Procesar_Bajas_EPP_MIGO, Normalizar_Layout_MIGO, Probar_Conexion_SAP, Diagnosticar_Layout_MIGO.
+**API pública:** Preparar_Bajas_Desde_App, Validar_Bajas_EPP, Procesar_Bajas_EPP_MIGO, Registrar_Contabilizacion_Manual, Probar_Conexion_SAP, Diagnosticar_Layout_MIGO.
+
+**Setup:** ver [docs/layout-bajas-epp.md](docs/layout-bajas-epp.md) y [samples/bajas-epp](samples/bajas-epp).
+
+### modCorreosNotasCredito.bas — Correos masivos de notas de crédito (v3)
+
+Envío por Outlook de una nota de crédito manual por distribuidor: asunto automático, carátula desde Resumen, detalle de partidas filtrado por distribuidor, tres textos configurables, firma y adjuntos.
+
+- **Distribuidor obligatorio** por fila (columna `Distribuidor`) y validado contra Resumen. Ya no se usa la posición del ID, que podía mandarle a un distribuidor los datos de otro.
+- **No reenvía:** las filas con Estado `Enviado` se omiten.
+- **Modos:** `REVISAR` (abre cada correo), `BORRADOR` (lo guarda en Borradores) y `ENVIAR` (pide confirmación). **Al terminar, el modo regresa a REVISAR.**
+- Si falta un adjunto o algo falla, el correo se descarta (`Close olDiscard`) y no queda abierto.
+- Valida el formato de los correos y, opcionalmente, una lista de dominios permitidos. La bitácora en LOG_CORREOS guarda solo conteos, nunca direcciones.
+
+**API pública:** PrepararConfiguracionCorreos, ValidarFilasCorreos, GenerarOCrearCorreosMasivos.
+
+**Setup:** ver [docs/layout-correos-notas-credito.md](docs/layout-correos-notas-credito.md) y [samples/correos-notas-credito](samples/correos-notas-credito).
 
 ### modComentariosParosSAP_v2.bas — Comentarios de paros de línea
 
@@ -79,11 +102,14 @@ Piloto de dos meses en planta de producción con 543 usuarios registrados, opera
 
 - SAP GUI for Windows con Scripting habilitado (cliente y servidor).
 - Excel 2016 o superior.
+- Outlook de escritorio (solo para correos masivos).
 - SAP y Excel con el mismo nivel de privilegios.
 
 ## Notas
 
 - Los datos de planta (centro, materiales, nóminas) han sido anonimizados.
 - La ruta de usuario local en modConsolidarMB51.bas fue reemplazada por una ruta genérica.
+- Los módulos de bajas EPP y correos no traen valores de planta, sistemas, correos ni clientes reales: todo va en CONFIG/Configuracion. Los CSV de `samples/` son ficticios.
+- Para importar los `.bas`, en el editor de VBA usa Archivo → Importar archivo. Se guardan con fin de línea CRLF.
 
 Desarrollado por José Luis Cruz Prieto.

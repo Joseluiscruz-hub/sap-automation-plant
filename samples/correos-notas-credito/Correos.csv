@@ -1,0 +1,3 @@
+ID,Enviar?,Estado,Para 1,Para 2,Para 3,Para adicional,CC 1,CC 2,CC 3,CC 4,CC 5,CC 6,CC 7,CC 8,CC 9,CC 10,CC adicional,CCO,Asunto,Mensaje,Adjuntos,Conteo Para,Conteo CC,Validación,Fecha procesado,Log/Error,Distribuidor
+1,SI,,contacto.norte@example.com,,,,analista.cxc@example.com,,,,,,,,,,,,,,,,,,,,900001
+2,SI,,contacto.sur@example.com,,,,analista.cxc@example.com,,,,,,,,,,,,,,,,,,,,900002

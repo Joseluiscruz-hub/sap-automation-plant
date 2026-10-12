@@ -1,0 +1,18 @@
+Parametro,Valor,Descripcion
+MODO,SIMULACION,SIMULACION = no toca SAP. VERIFICAR = captura y verifica (nunca contabiliza)
+SAP_SISTEMA,<SID>,ID de sistema SAP esperado
+SAP_MANDANTE,<MANDANTE>,Mandante esperado
+SAP_TIMEOUT_SEG,60,Espera maxima por respuesta de SAP
+CENTRO,<CENTRO>,Centro (WERKS). * = no capturar
+ALMACEN,<ALMACEN>,Almacen (LGORT)
+CMV,201,Clase de movimiento
+MIGO_ACCION,A07,Salida de mercancias
+MIGO_REFERENCIA,R10,Otros
+MIGO_BOTON_VERIFICAR,wnd[0]/tbar[1]/btn[7],ID del boton Verificar
+MIGO_ID_ACCION,,ID alterno (opcional)
+MIGO_ID_REFERENCIA,,ID alterno (opcional)
+MIGO_ID_CMV,,ID alterno (opcional)
+DESTINATARIO_DESDE,MOTIVO,MOTIVO / NOMINA / NOMINA_NOMBRE / FOLIO / MOTIVO_FOLIO
+TEXTO_DESDE,MOTIVO_FOLIO,Igual
+REFERENCIA_DESDE,FOLIO,Igual
+UME_DEFAULT,PZA,UME si la categoria no esta en CATALOGOS

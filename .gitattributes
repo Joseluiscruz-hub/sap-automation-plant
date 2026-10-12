@@ -1,0 +1,3 @@
+# Modulos VBA: se guardan con CRLF tal como los exporta/importa el editor de VBA
+*.bas -text
+*.cls -text

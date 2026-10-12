@@ -1,0 +1,4 @@
+Periodo,Folio,Fecha,Hora,Nomina,Nombre,Area consumo,Centro costo,Material,SKU,Descripcion,Categoria,Talla,Cantidad,Motivo,Origen,Estado
+2026-01,DEMO-0001,2026-01-15,08:10,EMP-001,Colaborador 001,Linea A,CC-DEMO-01,EPP-0001,EPP-0001,Guante de nitrilo demo,Guantes,M,1,Uso normal,Kiosko,active
+2026-01,DEMO-0002,2026-01-15,08:25,EMP-002,Colaborador 002,Linea B,CC-DEMO-02,EPP-0002,EPP-0002,Calzado de seguridad demo,Calzado,27,1,Reposicion,Kiosko,active
+2026-01,DEMO-0003,2026-01-16,09:40,EMP-003,Colaborador 003,Almacen,CC-DEMO-03,EPP-0003,EPP-0003,Lentes de seguridad demo,Gafas,UNI,2,Extravio,Admin,active

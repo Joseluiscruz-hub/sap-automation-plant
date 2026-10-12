@@ -1,0 +1,15 @@
+Parametro,Valor
+Modo,REVISAR
+Pausa entre envios (segundos),2
+Usar firma de Outlook,SI
+Ruta base de adjuntos (opcional),
+Asunto base,Notas de credito Manual
+Usar asunto automatico,SI
+Entrega nota de credito,segunda
+Texto 1 antes de caratula,Buen dia.
+Texto 2 entre caratula y detalle,Comunico que su {ENTREGA} entrega de nota de credito manual del mes ya se encuentra disponible.
+Texto 3 despues de detalle,Cualquier duda o comentario estoy a sus ordenes.\n\nSaludos.
+Nombre remitente cierre,
+Filas detalle correo (incluye encabezado),0
+Solo distribuidores con total distinto de cero,SI
+"Dominios permitidos (opcional, separados por ;)",example.com
