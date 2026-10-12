@@ -10,18 +10,19 @@ Automatiza la operación diaria de una planta de producción: eficiencia, paros 
 sap-automation-plant/
 ├── README.md
 ├── macros/
-│   ├── modReporteSAP_V6_5.bas        ← reporte de eficiencia completo
-│   ├── modMIGO_BajasEPP.bas          ← bajas de EPP en MIGO, v3 (~1,100 líneas)
-│   ├── modCorreosNotasCredito.bas    ← correos masivos de notas de crédito, v3 (~1,180 líneas)
-│   ├── modComentariosParosSAP_v2.bas ← comentarios TOP 3 de paros
-│   └── modConsolidarMB51.bas         ← consolidador de exportaciones MB51
+│   ├── modReporteSAP_V6_5.bas        ← reporte de eficiencia: REP2, producción, PDP, paros (4,679 líneas)
+│   ├── modComentariosParosSAP_v2.bas ← comentarios TOP 3 de paros (791 líneas)
+│   ├── modConciliacionRobusta.bas    ← conciliación envases/cajas vs MB51 (1,683 líneas)
+│   ├── modMIGO_BajasEPP.bas          ← bajas de EPP en MIGO, v3 (1,113 líneas)
+│   ├── modCorreosNotasCredito.bas    ← correos masivos de notas de crédito, v3 (1,179 líneas)
+│   └── modConsolidarMB51.bas         ← consolidador MB51 (PENDIENTE: hoy es un marcador de 39 líneas)
 ├── docs/
-│   ├── layout-bajas-epp.md           ← hojas, columnas, CONFIG y estados
+│   ├── layout-bajas-epp.md
 │   └── layout-correos-notas-credito.md
-└── samples/                          ← CSV con datos ficticios para armar los libros
-    ├── bajas-epp/
-    └── correos-notas-credito/
+└── samples/                          ← CSV con datos ficticios
 ```
+
+**Valores a configurar** en los módulos de eficiencia y paros (constantes al inicio del módulo): `CENTRO = "<CENTRO>"`, las transacciones Z del reporte (`ZREP_EFICIENCIA`, `ZREP_PAROS`, `ZREP_PRODUCCION`) y sus variantes (`/VAR_EFIC`, `/VAR_PAROS`, `/VAR_PROD`). En conciliación se configuran los materiales `<MATERIAL_ENVASE>` y `<MATERIAL_CAJA>` de la hoja Configuración. Son marcadores públicos: sustitúyelos por los valores reales de tu sistema.
 
 ## Módulos
 
@@ -29,12 +30,12 @@ sap-automation-plant/
 
 Una sola macro (`V6_ActualizarReporteCompletoSAP`) ejecuta seis pasos:
 
-1. **Eficiencia del día** — ZMNPPREP0002 variante /DSB, modo P_ACU, solo fecha de corte.
+1. **Eficiencia del día** — transacción Z de eficiencia (`TRANSACCION_REP2`) con su variante, modo P_ACU, solo fecha de corte.
 2. **Eficiencia acumulada del mes** — misma transacción, del día 1 al corte.
 3. **Detalle REP2** — P_DET: fecha de inicio real y % eficiencia acumulada.
-4. **Producción real** — ZMNPPREP0006 variante /BRBR: cajas unitarias por día y línea → hoja Ago 26.
+4. **Producción real** — transacción Z de producción (`TRANSACCION_PRODUCCION`): cajas unitarias por día y línea → hoja Ago 26.
 5. **PDP / Production Plan** — lee el archivo más reciente de `PDP\ENTRADA`, convierte CF a unidades de consumo y actualiza el plan.
-6. **Comentarios de paros** — ZMNPPREP0004 variante /SMOSKE_ALT: descarga el detalle del día, suma minutos por causa, toma el TOP 3 por línea y escribe REPORTE EFICIENCIA!W6:W9.
+6. **Comentarios de paros** — transacción Z de paros (`TRANSACCION`) con su variante: descarga el detalle del día, suma minutos por causa, toma el TOP 3 por línea y escribe REPORTE EFICIENCIA!W6:W9.
 
 También genera la hoja PAROS_AGRUPADOS con validación de 1,440 minutos por línea (24 h), y `LimpiarCamposAutomaticos` borra solo lo que cargó SAP sin tocar SKU, CTT ni fórmulas.
 
@@ -73,15 +74,29 @@ Envío por Outlook de una nota de crédito manual por distribuidor: asunto autom
 ### modComentariosParosSAP_v2.bas — Comentarios de paros de línea
 
 - Lee la fecha de REPORTE EFICIENCIA!F3.
-- Ejecuta ZMNPPREP0004 con variante /SMOSKE_ALT y descarga solo el detalle del día.
+- Ejecuta la transacción Z de paros (`ZREP_PAROS`, configurable) y descarga solo el detalle del día.
 - Suma los minutos por causa de paro para cada línea (L1-L4).
 - Toma las 3 causas con más minutos y escribe el resumen en W6:W9.
-- Ejemplo: `111 min Llenadora 1 L2 -Cua Sist. sensor/fotocel. falla`.
+- Ejemplo: `111 min Llenadora 1 L2 Sist. sensor/fotocel. falla`.
 - No modifica REP2, CTT, Dia ni Ago 26.
 
 **API pública:** ActualizarComentariosParosSAP, DiagnosticarSAPGUI.
 
-### modConsolidarMB51.bas — Consolidador MB51
+### modConciliacionRobusta.bas — Conciliación de envases y cajas contra MB51
+
+Una macro (`ConciliarTodo`) cruza los reportes de proveedor (hojas Proveedor Envase y Proveedor Caja) contra la exportación MB51.
+
+- Detecta automáticamente la fila de encabezados de cada fuente y normaliza la clave (remisión / O.E.).
+- Convierte cantidades con la regla de Configuración (factor y material SAP esperado por producto).
+- Considera movimientos de reversa y marca duplicados en proveedor, en MB51 o en ambos.
+- Clasifica cada registro (conciliado, pendiente SAP, diferencia de cantidad, fecha o material, duplicado) con tolerancias configurables.
+- Genera Conc Envase, Conc Caja, Incidencias y un Dashboard, y registra cada ejecución en una bitácora oculta.
+
+**API pública:** ConciliarTodo.
+
+### modConsolidarMB51.bas — Consolidador MB51 (pendiente)
+
+> En este repositorio el archivo todavía es un marcador; el código completo está pendiente de publicar.
 
 Consolida y limpia exportaciones de la transacción MB51 (movimientos de material).
 
