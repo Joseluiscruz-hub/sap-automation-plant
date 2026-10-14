@@ -1,0 +1,4 @@
+Cliente,Referencia,Factura,Fecha doc,Importe en ML,Tipo de partida,UUID Factura Relacionada
+900001,REF-DEMO-001,FAC-DEMO-001,05.01.2026,1000.00,Nota de credito,UUID-DEMO-0001
+900001,REF-DEMO-002,FAC-DEMO-002,07.01.2026,500.00,Nota de credito,UUID-DEMO-0002
+900002,REF-DEMO-003,FAC-DEMO-003,09.01.2026,820.50,Nota de credito,UUID-DEMO-0003
