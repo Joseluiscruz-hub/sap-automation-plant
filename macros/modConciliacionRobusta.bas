@@ -1,25 +1,31 @@
-Attribute VB_Name = "modConciliacionRobusta"
+﻿Attribute VB_Name = "modConciliacionRobusta"
 Option Explicit
 
 ' ================================================================
-'  CONCILIACION ROBUSTA DE ENVASES Y CAJAS CONTRA SAP MB51
-'  Ejecutar: ConciliarTodo
+'  CONCILIACIÓN ROBUSTA DE ENVASES Y CAJAS CONTRA SAP MB51
+'  Ejecutar conciliación: ConciliarTodo
+'  Actualizar catálogo SAP: ImportarMM60
 '  - No requiere activar referencias: usa Dictionary con late binding.
-'  - Detecta automaticamente la fila de encabezados de cada fuente.
+'  - Detecta automáticamente la fila de encabezados de cada fuente.
 '  - Detecta y avisa duplicados en proveedor y MB51.
+'  - Integra el catálogo maestro SAP exportado desde MM60.
 '  - Considera movimientos de reversa comunes de SAP.
 '  - Genera Conc Envase, Conc Caja, Incidencias y Dashboard.
-'  - Registra cada ejecucion en una hoja de auditoria oculta.
+'  - Registra cada ejecución en una hoja de auditoría oculta.
 ' ================================================================
 
 Private Const FILA_DATOS_SALIDA As Long = 5
+Private Const FILA_REGLAS_CONFIG As Long = 13
+Private Const FILA_ENCABEZADOS_MM60 As Long = 5
+Private Const FILA_DATOS_MM60 As Long = 6
+Private Const COL_CENTRO_MM60 As Long = 10
+Private Const COL_MATERIAL_MM60 As Long = 11
+Private Const COL_MONEDA_MM60 As Long = 26
 
 Private Const SH_MB51 As String = "MB51"
 Private Const SH_PROV_ENVASE As String = "Proveedor Envase"
 Private Const SH_PROV_CAJA As String = "Proveedor Caja"
-Private Function SH_CONFIG() As String
-    SH_CONFIG = "Configuraci" & ChrW(243) & "n"
-End Function
+Private Const SH_CONFIG As String = "Configuración"
 Private Const SH_CONC_ENVASE As String = "Conc Envase"
 Private Const SH_CONC_CAJA As String = "Conc Caja"
 Private Const SH_INCIDENCIAS As String = "Incidencias"
@@ -57,6 +63,7 @@ Public Sub ConciliarTodo()
     Dim idxMB51 As Object
     Dim conteoProveedor As Object
     Dim catalogo As Object
+    Dim catalogoSAP As Object
     Dim duplicadosMB51Afectados As Object
 
     Dim estEnvase As Variant
@@ -83,18 +90,20 @@ Public Sub ConciliarTodo()
     Application.EnableEvents = False
     Application.DisplayAlerts = False
     Application.Calculation = xlCalculationManual
-    Application.StatusBar = "Preparando conciliaci" & ChrW(243) & "n..."
+    Application.StatusBar = "Preparando conciliación..."
 
     Set wsMB51 = BuscarHoja(Array(SH_MB51))
     Set wsProvEnvase = BuscarHoja(Array(SH_PROV_ENVASE, "Proveedor de Envase", "PROVEEDOR ENVASE"))
     Set wsProvCaja = BuscarHoja(Array(SH_PROV_CAJA, "Proveedor de Caja", "PROVEEDOR CAJA"))
 
-    If wsMB51 Is Nothing Then Err.Raise vbObjectError + 1001, , "No se encontr" & ChrW(243) & " la hoja MB51."
-    If wsProvEnvase Is Nothing Then Err.Raise vbObjectError + 1002, , "No se encontr" & ChrW(243) & " la hoja Proveedor Envase."
-    If wsProvCaja Is Nothing Then Err.Raise vbObjectError + 1003, , "No se encontr" & ChrW(243) & " la hoja Proveedor Caja."
+    If wsMB51 Is Nothing Then Err.Raise vbObjectError + 1001, , "No se encontró la hoja MB51."
+    If wsProvEnvase Is Nothing Then Err.Raise vbObjectError + 1002, , "No se encontró la hoja Proveedor Envase."
+    If wsProvCaja Is Nothing Then Err.Raise vbObjectError + 1003, , "No se encontró la hoja Proveedor Caja."
 
     Set wsConfig = BuscarHoja(Array(SH_CONFIG, "Configuracion"))
     If wsConfig Is Nothing Then Set wsConfig = CrearConfiguracionBase()
+    PrepararEstructuraConfiguracion wsConfig
+    If ContarMaterialesCatalogoSAP(wsConfig) = 0 Then CargarCatalogoMM60Base wsConfig
 
     Set wsConcEnvase = ObtenerOCrearHoja(SH_CONC_ENVASE)
     Set wsConcCaja = ObtenerOCrearHoja(SH_CONC_CAJA)
@@ -105,7 +114,9 @@ Public Sub ConciliarTodo()
     Set idxMB51 = IndexarMB51(wsMB51)
     Set conteoProveedor = ConstruirConteoProveedor(wsProvEnvase, wsProvCaja)
     referenciasDuplicadasProveedor = ContarReferenciasDuplicadas(conteoProveedor)
-    Set catalogo = ConstruirCatalogo(wsConfig)
+    Set catalogoSAP = ConstruirCatalogoSAP(wsConfig)
+    ActualizarValidacionReglas wsConfig, catalogoSAP
+    Set catalogo = ConstruirCatalogo(wsConfig, catalogoSAP)
     Set duplicadosMB51Afectados = NuevoDiccionario()
 
     LeerTolerancias wsConfig, toleranciaCantidad, toleranciaFecha
@@ -144,7 +155,7 @@ Public Sub ConciliarTodo()
     Application.CalculateFull
 
     If referenciasDuplicadasProveedor > 0 Or duplicadosMB51Afectados.Count > 0 Then
-        mensaje = "Conciliaci" & ChrW(243) & "n terminada con alertas." & vbCrLf & vbCrLf & _
+        mensaje = "Conciliación terminada con alertas." & vbCrLf & vbCrLf & _
                   "Registros procesados: " & Format$(totalRegistros, "#,##0") & vbCrLf & _
                   "Conciliados: " & Format$(totalConciliados, "#,##0") & vbCrLf & _
                   "Por revisar: " & Format$(totalRevision, "#,##0") & vbCrLf & _
@@ -157,13 +168,13 @@ Public Sub ConciliarTodo()
             mensaje = mensaje & vbCrLf & vbCrLf & "Duplicados: " & _
                       ResumenReferenciasDuplicadas(conteoProveedor, 12)
         End If
-        MsgBox mensaje, vbExclamation + vbOKOnly, "Conciliaci" & ChrW(243) & "n con alertas"
+        MsgBox mensaje, vbExclamation + vbOKOnly, "Conciliación con alertas"
     Else
-        mensaje = "Conciliaci" & ChrW(243) & "n terminada." & vbCrLf & vbCrLf & _
+        mensaje = "Conciliación terminada." & vbCrLf & vbCrLf & _
                   "Registros procesados: " & Format$(totalRegistros, "#,##0") & vbCrLf & _
                   "Conciliados: " & Format$(totalConciliados, "#,##0") & vbCrLf & _
                   "Por revisar: " & Format$(totalRevision, "#,##0")
-        MsgBox mensaje, vbInformation + vbOKOnly, "Conciliaci" & ChrW(243) & "n terminada"
+        MsgBox mensaje, vbInformation + vbOKOnly, "Conciliación terminada"
     End If
 
 SalidaSegura:
@@ -177,10 +188,46 @@ SalidaSegura:
     Exit Sub
 
 ControlError:
-    mensaje = "No se pudo completar la conciliaci" & ChrW(243) & "n." & vbCrLf & vbCrLf & _
+    mensaje = "No se pudo completar la conciliación." & vbCrLf & vbCrLf & _
               "Error " & Err.Number & ": " & Err.Description
-    MsgBox mensaje, vbCritical + vbOKOnly, "Error de conciliaci" & ChrW(243) & "n"
+    MsgBox mensaje, vbCritical + vbOKOnly, "Error de conciliación"
     Resume SalidaSegura
+End Sub
+
+Public Sub ImportarMM60()
+    Dim wsConfig As Worksheet
+    Dim catalogoSAP As Object
+    Dim ruta As String
+    Dim materiales As Long
+    Dim pantallaAnterior As Boolean
+
+    On Error GoTo ControlError
+    pantallaAnterior = Application.ScreenUpdating
+
+    Set wsConfig = BuscarHoja(Array(SH_CONFIG, "Configuracion"))
+    If wsConfig Is Nothing Then Set wsConfig = CrearConfiguracionBase()
+    PrepararEstructuraConfiguracion wsConfig
+
+    ruta = SeleccionarArchivoMM60()
+    If Len(ruta) = 0 Then Exit Sub
+
+    Application.ScreenUpdating = False
+    materiales = CargarCatalogoMM60DesdeArchivo(wsConfig, ruta)
+    Set catalogoSAP = ConstruirCatalogoSAP(wsConfig)
+    ActualizarValidacionReglas wsConfig, catalogoSAP
+    Application.ScreenUpdating = pantallaAnterior
+
+    MsgBox "Catálogo MM60 actualizado correctamente." & vbCrLf & vbCrLf & _
+           "Materiales cargados: " & Format$(materiales, "#,##0") & vbCrLf & _
+           "Hoja: " & wsConfig.Name, _
+           vbInformation + vbOKOnly, "Importación MM60"
+    Exit Sub
+
+ControlError:
+    Application.ScreenUpdating = pantallaAnterior
+    MsgBox "No se pudo importar el MM60." & vbCrLf & vbCrLf & _
+           "Error " & Err.Number & ": " & Err.Description, _
+           vbCritical + vbOKOnly, "Error de importación"
 End Sub
 
 Private Function IndexarMB51(ByVal ws As Worksheet) As Object
@@ -336,12 +383,13 @@ Private Function ResumenReferenciasDuplicadas(ByVal conteoProveedor As Object, _
     Next clave
 
     If total > mostradas Then
-        resumen = resumen & " y " & (total - mostradas) & " m" & ChrW(225) & "s"
+        resumen = resumen & " y " & (total - mostradas) & " más"
     End If
     ResumenReferenciasDuplicadas = resumen
 End Function
 
-Private Function ConstruirCatalogo(ByVal ws As Worksheet) As Object
+Private Function ConstruirCatalogo(ByVal ws As Worksheet, _
+                                   ByVal catalogoSAP As Object) As Object
     Dim dic As Object
     Dim ultima As Long
     Dim datos As Variant
@@ -354,15 +402,17 @@ Private Function ConstruirCatalogo(ByVal ws As Worksheet) As Object
     Dim material As String
     Dim baseCantidad As String
     Dim registro As Variant
+    Dim materialEnMM60 As Boolean
+    Dim descripcionMM60 As String
 
     Set dic = NuevoDiccionario()
     ultima = UltimaFila(ws, 3)
-    If ultima < 13 Then
+    If ultima < FILA_REGLAS_CONFIG Then
         Set ConstruirCatalogo = dic
         Exit Function
     End If
 
-    datos = ws.Range(ws.Cells(13, 1), ws.Cells(ultima, 6)).Value2
+    datos = ws.Range(ws.Cells(FILA_REGLAS_CONFIG, 1), ws.Cells(ultima, 6)).Value2
     For i = 1 To UBound(datos, 1)
         tipo = NormalizarTexto(datos(i, 2))
         producto = NormalizarTexto(datos(i, 3))
@@ -371,9 +421,12 @@ Private Function ConstruirCatalogo(ByVal ws As Worksheet) As Object
             factor = NumeroSeguro(datos(i, 4), okFactor)
             material = NormalizarClave(datos(i, 5))
             baseCantidad = NormalizarTexto(datos(i, 6))
+            materialEnMM60 = (Len(material) > 0 And catalogoSAP.Exists(material))
+            descripcionMM60 = DescripcionMaterialSAP(catalogoSAP, material)
 
             If Not dic.Exists(clave) Then
-                registro = Array(factor, material, baseCantidad, False, okFactor)
+                registro = Array(factor, material, baseCantidad, False, okFactor, _
+                                 materialEnMM60, descripcionMM60)
                 dic.Add clave, registro
             Else
                 registro = dic(clave)
@@ -407,6 +460,8 @@ Private Function ConciliarEnvase(ByVal wsFuente As Worksheet, ByVal wsDestino As
     Dim factor As Double
     Dim materialEsperado As String
     Dim baseCantidad As String
+    Dim materialEnMM60 As Boolean
+    Dim descripcionMM60 As String
     Dim cajas As Double
     Dim tarimas As Double
     Dim okCajas As Boolean
@@ -460,7 +515,8 @@ Private Function ConciliarEnvase(ByVal wsFuente As Worksheet, ByVal wsDestino As
             producto = NormalizarTexto(datos(i, 9))
             cfgClave = "ENVASE|" & producto
             LeerConfiguracionProducto catalogo, cfgClave, configExiste, configDuplicada, _
-                                       factorValido, factor, materialEsperado, baseCantidad
+                                       factorValido, factor, materialEsperado, baseCantidad, _
+                                       materialEnMM60, descripcionMM60
 
             cajas = NumeroSeguro(datos(i, 7), okCajas)
             tarimas = NumeroSeguro(datos(i, 8), okTarimas)
@@ -495,7 +551,8 @@ Private Function ConciliarEnvase(ByVal wsFuente As Worksheet, ByVal wsDestino As
             End If
 
             EvaluarEstado repeticionesProveedor, movimientosMB51, configExiste, _
-                          configDuplicada, factorValido, materialEsperado, _
+                          configDuplicada, factorValido, materialEnMM60, _
+                          materialEsperado, descripcionMM60, _
                           MaterialRegistro(rec, movimientosMB51), cantidadEsperada, _
                           cantidadSAP, fechaProveedor, fechaSAP, toleranciaCantidad, _
                           toleranciaFecha, estado, riesgo, observacion
@@ -561,6 +618,8 @@ Private Function ConciliarCaja(ByVal wsFuente As Worksheet, ByVal wsDestino As W
     Dim factor As Double
     Dim materialEsperado As String
     Dim baseCantidad As String
+    Dim materialEnMM60 As Boolean
+    Dim descripcionMM60 As String
     Dim cantidadProveedor As Double
     Dim okCantidadProveedor As Boolean
     Dim cantidadEsperada As Double
@@ -612,7 +671,8 @@ Private Function ConciliarCaja(ByVal wsFuente As Worksheet, ByVal wsDestino As W
             producto = NormalizarTexto(datos(i, 9))
             cfgClave = "CAJA|" & producto
             LeerConfiguracionProducto catalogo, cfgClave, configExiste, configDuplicada, _
-                                       factorValido, factor, materialEsperado, baseCantidad
+                                       factorValido, factor, materialEsperado, baseCantidad, _
+                                       materialEnMM60, descripcionMM60
 
             cantidadProveedor = NumeroSeguro(datos(i, 10), okCantidadProveedor)
             If Not okCantidadProveedor Then cantidadProveedor = 0
@@ -646,7 +706,8 @@ Private Function ConciliarCaja(ByVal wsFuente As Worksheet, ByVal wsDestino As W
             End If
 
             EvaluarEstado repeticionesProveedor, movimientosMB51, configExiste, _
-                          configDuplicada, factorValido, materialEsperado, _
+                          configDuplicada, factorValido, materialEnMM60, _
+                          materialEsperado, descripcionMM60, _
                           MaterialRegistro(rec, movimientosMB51), cantidadEsperada, _
                           cantidadSAP, fechaProveedor, fechaSAP, toleranciaCantidad, _
                           toleranciaFecha, estado, riesgo, observacion
@@ -693,7 +754,8 @@ End Function
 
 Private Sub EvaluarEstado(ByVal repeticionesProveedor As Long, ByVal movimientosMB51 As Long, _
                           ByVal configExiste As Boolean, ByVal configDuplicada As Boolean, _
-                          ByVal factorValido As Boolean, ByVal materialEsperado As String, _
+                          ByVal factorValido As Boolean, ByVal materialEnMM60 As Boolean, _
+                          ByVal materialEsperado As String, ByVal descripcionMM60 As String, _
                           ByVal materialSAP As String, ByVal cantidadEsperada As Double, _
                           ByVal cantidadSAP As Double, ByVal fechaProveedor As Double, _
                           ByVal fechaSAP As Double, ByVal toleranciaCantidad As Double, _
@@ -711,13 +773,18 @@ Private Sub EvaluarEstado(ByVal repeticionesProveedor As Long, ByVal movimientos
         observacion = "La referencia aparece " & repeticionesProveedor & _
                       " veces en los reportes de proveedor."
     ElseIf configDuplicada Then
-        estado = "CONFIGURACI" & ChrW(211) & "N DUPLICADA"
+        estado = "CONFIGURACIÓN DUPLICADA"
         riesgo = "ALTO"
-        observacion = "El producto tiene m" & ChrW(225) & "s de una regla en Configuraci" & ChrW(243) & "n."
+        observacion = "El producto tiene más de una regla en Configuración."
     ElseIf Not configExiste Or Not factorValido Or Len(materialEsperado) = 0 Then
         estado = "SIN FACTOR"
         riesgo = "ALTO"
-        observacion = "Falta una regla " & ChrW(250) & "nica y completa de conversi" & ChrW(243) & "n/material esperado."
+        observacion = "Falta una regla única y completa de conversión/material esperado."
+    ElseIf Not materialEnMM60 Then
+        estado = "MATERIAL FUERA DE MM60"
+        riesgo = "ALTO"
+        observacion = "El material configurado " & materialEsperado & _
+                      " no existe en el catálogo SAP MM60 cargado."
     ElseIf movimientosMB51 = 0 Then
         estado = "PENDIENTE SAP"
         riesgo = "ALTO"
@@ -731,25 +798,26 @@ Private Sub EvaluarEstado(ByVal repeticionesProveedor As Long, ByVal movimientos
         estado = "DIFERENCIA MATERIAL"
         riesgo = "MEDIO"
         observacion = "Material esperado " & materialEsperado & _
-                      "; material SAP " & materialSAP & "."
+                      " (" & descripcionMM60 & "); material SAP " & materialSAP & "."
     ElseIf Abs(cantidadSAP - cantidadEsperada) > toleranciaCantidad Then
         estado = "DIFERENCIA CANTIDAD"
         riesgo = "MEDIO"
         observacion = "La diferencia de cantidad excede la tolerancia de " & _
                       Format$(toleranciaCantidad, "#,##0.00") & "."
     ElseIf fechaProveedor <= 0 Or fechaSAP <= 0 Then
-        estado = "FECHA INV" & ChrW(193) & "LIDA"
+        estado = "FECHA INVÁLIDA"
         riesgo = "ALTO"
-        observacion = "Falta una fecha v" & ChrW(225) & "lida en proveedor o MB51."
+        observacion = "Falta una fecha válida en proveedor o MB51."
     ElseIf Abs(CLng(fechaSAP) - CLng(fechaProveedor)) > toleranciaFecha Then
         estado = "DIFERENCIA FECHA"
         riesgo = "MEDIO"
         observacion = "La diferencia de fecha excede la tolerancia de " & _
-                      toleranciaFecha & " d" & ChrW(237) & "a(s)."
+                      toleranciaFecha & " día(s)."
     Else
         estado = "CONCILIADO"
         riesgo = "BAJO"
-        observacion = "Referencia, material, cantidad y fecha conciliados."
+        observacion = "Referencia, material " & materialEsperado & " (" & _
+                      descripcionMM60 & "), cantidad y fecha conciliados."
     End If
 End Sub
 
@@ -861,12 +929,12 @@ Private Sub ActualizarDashboard(ByVal ws As Worksheet, ByVal estEnvase As Varian
     If totalRegistros > 0 Then porcentaje = totalConciliados / totalRegistros
 
     ws.Range("A4:M23").UnMerge
-    If Len(CStr(ws.Range("A1").Value2)) = 0 Then ws.Range("A1").Value = "Dashboard de conciliaci" & ChrW(243) & "n"
+    If Len(CStr(ws.Range("A1").Value2)) = 0 Then ws.Range("A1").Value = "Dashboard de conciliación"
 
     ws.Range("A4").Value = "REGISTROS PROVEEDOR"
     ws.Range("D4").Value = "CONCILIADOS"
     ws.Range("G4").Value = "PENDIENTE / REVISAR"
-    ws.Range("J4").Value = "% CONCILIACI" & ChrW(211) & "N"
+    ws.Range("J4").Value = "% CONCILIACIÓN"
     ws.Range("A5").Value = totalRegistros
     ws.Range("D5").Value = totalConciliados
     ws.Range("G5").Value = totalRevision
@@ -879,7 +947,7 @@ Private Sub ActualizarDashboard(ByVal ws As Worksheet, ByVal estEnvase As Varian
         Array("Caja", estCaja(1), estCaja(2)))
 
     EscribirMatriz ws.Range("A16"), Array( _
-        Array("Fuente", "Registros", "% conciliado", "Costo log" & ChrW(237) & "stico proveedor", "Valoraci" & ChrW(243) & "n SAP", "Interpretaci" & ChrW(243) & "n"), _
+        Array("Fuente", "Registros", "% conciliado", "Costo logístico proveedor", "Valoración SAP", "Interpretación"), _
         Array("Envase", estEnvase(0), PorcentajeSeguro(estEnvase(1), estEnvase(0)), estEnvase(4), estEnvase(5), "CXC vs valor material: no comparar"), _
         Array("Caja", estCaja(0), PorcentajeSeguro(estCaja(1), estCaja(0)), estCaja(4), estCaja(5), "Subtotal vs valor material: no comparar"), _
         Array("Total", totalRegistros, porcentaje, costoTotal, valorSAPTotal, "Totales informativos de distinta naturaleza"))
@@ -1020,23 +1088,23 @@ Private Sub PrepararHojaConciliacion(ByVal ws As Worksheet, ByVal esEnvase As Bo
     Dim encabezados As Variant
 
     If esEnvase Then
-        encabezados = Array("Remisi" & ChrW(243) & "n", "Pedido proveedor", "Planta", "Transportista", _
+        encabezados = Array("Remisión", "Pedido proveedor", "Planta", "Transportista", _
                             "Fecha proveedor", "Insumo", "Cajas", "Tarimas", "Factor", _
                             "Cant. esperada", "Coincidencias SAP", "Pedido SAP", _
                             "Doc material SAP", "Material esperado", "Material SAP", _
                             "Texto material SAP", "Cantidad SAP neta", "Dif. cantidad", _
-                            "Fecha SAP", "Dif. d" & ChrW(237) & "as", "Total CXC proveedor", "Importe SAP", _
-                            "Estatus", "Riesgo", "Observaci" & ChrW(243) & "n")
-        If Len(CStr(ws.Range("A1").Value2)) = 0 Then ws.Range("A1").Value = "Conciliaci" & ChrW(243) & "n " & ChrW(183) & " Envase"
+                            "Fecha SAP", "Dif. días", "Total CXC proveedor", "Importe SAP", _
+                            "Estatus", "Riesgo", "Observación")
+        If Len(CStr(ws.Range("A1").Value2)) = 0 Then ws.Range("A1").Value = "Conciliación · Envase"
     Else
-        encabezados = Array("No. O.E.", "Bit" & ChrW(225) & "cora", "Fecha carga", "Fecha entrega", _
+        encabezados = Array("No. O.E.", "Bitácora", "Fecha carga", "Fecha entrega", _
                             "Origen", "Destino", "Producto", "Cant. proveedor", "Factor", _
                             "Cant. esperada", "Coincidencias SAP", "Pedido SAP", _
                             "Doc material SAP", "Material esperado", "Material SAP", _
                             "Texto material SAP", "Cantidad SAP neta", "Dif. cantidad", _
-                            "Fecha SAP", "Dif. d" & ChrW(237) & "as", "Subtotal proveedor", "Importe SAP", _
-                            "Estatus", "Riesgo", "Observaci" & ChrW(243) & "n")
-        If Len(CStr(ws.Range("A1").Value2)) = 0 Then ws.Range("A1").Value = "Conciliaci" & ChrW(243) & "n " & ChrW(183) & " Caja"
+                            "Fecha SAP", "Dif. días", "Subtotal proveedor", "Importe SAP", _
+                            "Estatus", "Riesgo", "Observación")
+        If Len(CStr(ws.Range("A1").Value2)) = 0 Then ws.Range("A1").Value = "Conciliación · Caja"
     End If
 
     EscribirMatriz ws.Range("A4"), Array(encabezados)
@@ -1058,10 +1126,10 @@ End Sub
 Private Sub PrepararHojaIncidencias(ByVal ws As Worksheet)
     Dim encabezados As Variant
 
-    encabezados = Array("Fuente", "Folio", "Pedido / Bit" & ChrW(225) & "cora", "Producto / Insumo", _
+    encabezados = Array("Fuente", "Folio", "Pedido / Bitácora", "Producto / Insumo", _
                         "Cant. esperada", "Cant. SAP", "Dif. cantidad", "Fecha proveedor", _
-                        "Fecha SAP", "Dif. d" & ChrW(237) & "as", "Coincidencias", "Estatus", "Riesgo", _
-                        "Observaci" & ChrW(243) & "n")
+                        "Fecha SAP", "Dif. días", "Coincidencias", "Estatus", "Riesgo", _
+                        "Observación")
 
     If Len(CStr(ws.Range("A1").Value2)) = 0 Then ws.Range("A1").Value = "Incidencias activas"
     ws.Range("A3").Value = "Incluye pendientes, diferencias y duplicados de proveedor o MB51."
@@ -1143,8 +1211,9 @@ Private Sub FormatearAlertas(ByVal ws As Worksheet, ByVal filaInicial As Long, _
                     .Font.Color = RGB(19, 122, 69)
                 Case InStr(1, estado, "DUPLICADO", vbTextCompare) > 0 Or _
                      estado = "PENDIENTE SAP" Or estado = "SIN FACTOR" Or _
-                     estado = "FECHA INV" & ChrW(193) & "LIDA" Or _
-                     estado = "CONFIGURACI" & ChrW(211) & "N DUPLICADA"
+                     estado = "FECHA INVÁLIDA" Or _
+                     estado = "MATERIAL FUERA DE MM60" Or _
+                     estado = "CONFIGURACIÓN DUPLICADA"
                     .Interior.Color = RGB(253, 226, 226)
                     .Font.Color = RGB(164, 22, 43)
                 Case Else
@@ -1174,7 +1243,9 @@ End Sub
 Private Sub LeerConfiguracionProducto(ByVal catalogo As Object, ByVal clave As String, _
                                       ByRef existe As Boolean, ByRef duplicada As Boolean, _
                                       ByRef factorValido As Boolean, ByRef factor As Double, _
-                                      ByRef material As String, ByRef baseCantidad As String)
+                                      ByRef material As String, ByRef baseCantidad As String, _
+                                      ByRef materialEnMM60 As Boolean, _
+                                      ByRef descripcionMM60 As String)
     Dim cfg As Variant
 
     existe = False
@@ -1183,6 +1254,8 @@ Private Sub LeerConfiguracionProducto(ByVal catalogo As Object, ByVal clave As S
     factor = 0
     material = vbNullString
     baseCantidad = vbNullString
+    materialEnMM60 = False
+    descripcionMM60 = vbNullString
 
     If catalogo.Exists(clave) Then
         cfg = catalogo(clave)
@@ -1192,6 +1265,8 @@ Private Sub LeerConfiguracionProducto(ByVal catalogo As Object, ByVal clave As S
         baseCantidad = CStr(cfg(2))
         duplicada = CBool(cfg(3))
         factorValido = CBool(cfg(4)) And factor > 0
+        materialEnMM60 = CBool(cfg(5))
+        descripcionMM60 = CStr(cfg(6))
     End If
 End Sub
 
@@ -1262,21 +1337,438 @@ End Sub
 
 Private Function CrearConfiguracionBase() As Worksheet
     Dim ws As Worksheet
-    Set ws = ObtenerOCrearHoja(SH_CONFIG)
+    Dim catalogoSAP As Object
 
-    ws.Range("A1").Value = "Configuraci" & ChrW(243) & "n y reglas"
-    ws.Range("A5").Value = "Par" & ChrW(225) & "metros de tolerancia"
-    EscribirMatriz ws.Range("A6"), Array( _
-        Array("Par" & ChrW(225) & "metro", "Valor"), _
-        Array("Tolerancia cantidad (unidades)", 0), _
-        Array("Tolerancia fecha (d" & ChrW(237) & "as)", 1))
-    ws.Range("A11").Value = "Cat" & ChrW(225) & "logo de conversi" & ChrW(243) & "n y material esperado"
-    EscribirMatriz ws.Range("A12"), Array( _
-        Array("Clave", "Tipo", "Producto / Insumo", "Factor piezas por unidad proveedor", "Material SAP esperado", "Base de cantidad"), _
-        Array("Envase|GARRAFON", "Envase", "GARRAFON", 100, "<MATERIAL_ENVASE>", "Tarimas"), _
-        Array("Caja|CAJA 3 LT", "Caja", "CAJA 3 LT", 1, "<MATERIAL_CAJA>", "Cantidad proveedor"))
+    Set ws = ObtenerOCrearHoja(SH_CONFIG)
+    PrepararEstructuraConfiguracion ws
+    CargarCatalogoMM60Base ws
+    Set catalogoSAP = ConstruirCatalogoSAP(ws)
+    ActualizarValidacionReglas ws, catalogoSAP
 
     Set CrearConfiguracionBase = ws
+End Function
+
+Private Sub PrepararEstructuraConfiguracion(ByVal ws As Worksheet)
+    Dim ultimaRegla As Long
+
+    If Len(CStr(ws.Range("A1").Value2)) = 0 Then
+        ws.Range("A1").Value = "Configuración y reglas de conciliación"
+    End If
+    If Len(CStr(ws.Range("A3").Value2)) = 0 Then
+        ws.Range("A3").Value = "Nota: 'Unidad de precio' de MM60 no sustituye el factor operativo de conversión."
+    End If
+
+    ws.Range("A5").Value = "Parámetros de tolerancia"
+    If Len(CStr(ws.Range("A6").Value2)) = 0 Then
+        EscribirMatriz ws.Range("A6"), Array( _
+            Array("Parámetro", "Valor"), _
+            Array("Tolerancia cantidad (unidades)", 0), _
+            Array("Tolerancia fecha (días)", 1))
+    End If
+
+    ws.Range("A11").Value = "Reglas proveedor a material SAP"
+    EscribirMatriz ws.Range("A12"), Array(Array( _
+        "Clave", "Tipo", "Producto / Insumo", _
+        "Factor piezas por unidad proveedor", "Material SAP esperado", _
+        "Base de cantidad", "Descripción MM60", "Validación MM60"))
+
+    ultimaRegla = UltimaFila(ws, 3)
+    If ultimaRegla < FILA_REGLAS_CONFIG Then
+        EscribirMatriz ws.Range("A13"), Array( _
+            Array("Envase|GARRAFON", "Envase", "GARRAFON", 100, _
+                  "170752", "Tarimas", "", ""), _
+            Array("Caja|CAJA 3 LT", "Caja", "CAJA 3 LT", 1, _
+                  "171036", "Cantidad proveedor", "", ""))
+    End If
+
+    ws.Range("J4").Value = "CATÁLOGO MAESTRO SAP · MM60"
+    EscribirMatriz ws.Range("J5"), Array(Array( _
+        "Centro", "Material SAP", "Texto breve SAP", "Precio", _
+        "Unidad de precio", "Clase valoración", "UMB", "CatVa", _
+        "Grupo artículo", "GCp", "Tipo material", "CaP", "Prc", _
+        "Creado por", "ABC", "Última modificación", "Moneda"))
+
+    With ws.Range("A6:B6")
+        .Interior.Color = RGB(38, 50, 56)
+        .Font.Color = vbWhite
+        .Font.Bold = True
+    End With
+    With ws.Range("A12:H12")
+        .Interior.Color = RGB(38, 50, 56)
+        .Font.Color = vbWhite
+        .Font.Bold = True
+        .WrapText = True
+    End With
+    With ws.Range("J5:Z5")
+        .Interior.Color = RGB(38, 50, 56)
+        .Font.Color = vbWhite
+        .Font.Bold = True
+        .WrapText = True
+    End With
+
+    ws.Range("D13:D" & MaxLong(UltimaFila(ws, 3), FILA_REGLAS_CONFIG)).NumberFormat = "#,##0.00"
+    ws.Range("M6:M" & MaxLong(UltimaFila(ws, COL_MATERIAL_MM60), FILA_DATOS_MM60)).NumberFormat = "#,##0.00"
+    ws.Range("Y6:Y" & MaxLong(UltimaFila(ws, COL_MATERIAL_MM60), FILA_DATOS_MM60)).NumberFormat = "dd-mmm-yyyy"
+End Sub
+
+Private Sub CargarCatalogoMM60Base(ByVal ws As Worksheet)
+    Dim ultima As Long
+
+    ultima = MaxLong(UltimaFila(ws, COL_MATERIAL_MM60), FILA_DATOS_MM60)
+    ws.Range(ws.Cells(FILA_DATOS_MM60, COL_CENTRO_MM60), _
+             ws.Cells(ultima, COL_MONEDA_MM60)).ClearContents
+
+    EscribirMatriz ws.Cells(FILA_DATOS_MM60, COL_CENTRO_MM60), Array( _
+        Array("MAAA", "170752", "ENV PET ROSCADO 51 CIEL 20L GRANEL", 0, 1, "", "BOT", "4200", "A0540", "M00", "ZEE1", "ND", "S", "CSCMXVT34002", "", DateSerial(2026, 3, 11), "MXN"), _
+        Array("MAAA", "171036", "CAJA PLÁSTICA 6 CAV. 3L", 0, 1, "", "PZA", "4201", "A0018", "M00", "ZEE1", "ND", "S", "CSCMXVT34002", "", DateSerial(2026, 5, 15), "MXN"), _
+        Array("MAAA", "171834", "ENV RP CC 2L (107GR) GRANEL NOM51", 0, 9, "", "BOT", "4200", "A0065", "M00", "ZEE1", "ND", "S", "CSCMXVT34002", "", DateSerial(2026, 3, 11), "MXN"), _
+        Array("MAAA", "171836", "ENV RP CC 3L (142GR) GRANEL NOM51", 0, 6, "", "BOT", "4200", "A0065", "M00", "ZEE1", "ND", "S", "CSCMXVT34002", "", DateSerial(2026, 3, 11), "MXN"), _
+        Array("MAAA", "172774", "ENV RP CC 3L (142GR) GRANEL NOM51", 0, 1, "", "BOT", "4200", "A0017", "", "ZEE1", "ND", "S", "MX01670212", "", DateSerial(2026, 7, 1), "MXN"), _
+        Array("MAAA", "195046", "TARIMA GRAHAM", 353.72, 1, "", "PZA", "4300", "A0272", "M00", "ZRP1", "ND", "S", "MDM_OPER02", "", DateSerial(2026, 2, 4), "MXN"), _
+        Array("MAAA", "195054", "MARCO GRAHAM", 142.78, 1, "", "PZA", "4300", "A0492", "M00", "ZRP1", "ND", "S", "MDM_OPER02", "", DateSerial(2026, 2, 4), "MXN"), _
+        Array("MAAA", "195057", "SEPARADOR GRAHAM", 12.87, 1, "", "PZA", "4300", "A0235", "M00", "ZRP1", "ND", "S", "MDM_OPER02", "", DateSerial(2026, 2, 4), "MXN"), _
+        Array("MAAA", "195536", "TARIMA EUSA", 0.01, 1, "", "PZA", "4300", "A0272", "M00", "ZRP1", "ND", "S", "CSCMXVT34002", "", DateSerial(2026, 2, 17), "MXN"), _
+        Array("MAAA", "195538", "MARCO EUSA", 0.01, 1, "", "PZA", "4300", "A0492", "M00", "ZRP1", "ND", "S", "CSCMXVT34002", "", DateSerial(2026, 2, 4), "MXN"), _
+        Array("MAAA", "195540", "SEPARADOR EUSA", 0.01, 1, "", "PZA", "4300", "A0235", "M00", "ZRP1", "ND", "S", "CSCMXVT34002", "", DateSerial(2026, 2, 4), "MXN"))
+
+    ws.Range("J2").Value = "Origen del catálogo"
+    ws.Range("K2").Value = "MM60 SAP proporcionado · 16-jul-2026"
+    ws.Range("M6:M16").NumberFormat = "#,##0.00"
+    ws.Range("Y6:Y16").NumberFormat = "dd-mmm-yyyy"
+End Sub
+
+Private Function ContarMaterialesCatalogoSAP(ByVal ws As Worksheet) As Long
+    Dim ultima As Long
+    Dim r As Long
+
+    ultima = UltimaFila(ws, COL_MATERIAL_MM60)
+    For r = FILA_DATOS_MM60 To ultima
+        If Len(NormalizarClave(ws.Cells(r, COL_MATERIAL_MM60).Value2)) > 0 Then
+            ContarMaterialesCatalogoSAP = ContarMaterialesCatalogoSAP + 1
+        End If
+    Next r
+End Function
+
+Private Function ConstruirCatalogoSAP(ByVal ws As Worksheet) As Object
+    Dim dic As Object
+    Dim ultima As Long
+    Dim datos As Variant
+    Dim i As Long
+    Dim material As String
+    Dim registro As Variant
+
+    Set dic = NuevoDiccionario()
+    ultima = UltimaFila(ws, COL_MATERIAL_MM60)
+    If ultima < FILA_DATOS_MM60 Then
+        Set ConstruirCatalogoSAP = dic
+        Exit Function
+    End If
+
+    datos = ws.Range(ws.Cells(FILA_DATOS_MM60, COL_CENTRO_MM60), _
+                     ws.Cells(ultima, COL_MONEDA_MM60)).Value2
+    For i = 1 To UBound(datos, 1)
+        material = NormalizarClave(datos(i, 2))
+        If Len(material) > 0 Then
+            registro = Array(TextoSeguro(datos(i, 1)), TextoSeguro(datos(i, 3)), _
+                             TextoSeguro(datos(i, 7)), TextoSeguro(datos(i, 9)), _
+                             TextoSeguro(datos(i, 11)), datos(i, 4), datos(i, 5), _
+                             datos(i, 16), TextoSeguro(datos(i, 17)))
+            If Not dic.Exists(material) Then dic.Add material, registro
+        End If
+    Next i
+
+    Set ConstruirCatalogoSAP = dic
+End Function
+
+Private Function DescripcionMaterialSAP(ByVal catalogoSAP As Object, _
+                                        ByVal material As String) As String
+    Dim registro As Variant
+
+    If Len(material) > 0 And catalogoSAP.Exists(material) Then
+        registro = catalogoSAP(material)
+        DescripcionMaterialSAP = CStr(registro(1))
+    End If
+End Function
+
+Private Sub ActualizarValidacionReglas(ByVal ws As Worksheet, _
+                                       ByVal catalogoSAP As Object)
+    Dim ultima As Long
+    Dim r As Long
+    Dim producto As String
+    Dim material As String
+
+    ultima = UltimaFila(ws, 3)
+    If ultima < FILA_REGLAS_CONFIG Then Exit Sub
+
+    With ws.Range(ws.Cells(FILA_REGLAS_CONFIG, 7), ws.Cells(ultima, 8))
+        .ClearContents
+        .Interior.Pattern = xlNone
+        .Font.ColorIndex = xlAutomatic
+        .Font.Bold = False
+    End With
+    For r = FILA_REGLAS_CONFIG To ultima
+        producto = NormalizarTexto(ws.Cells(r, 3).Value2)
+        If Len(producto) > 0 Then
+            material = NormalizarClave(ws.Cells(r, 5).Value2)
+            If Len(material) = 0 Then
+                ws.Cells(r, 8).Value = "FALTA MATERIAL"
+                MarcarValidacionMM60 ws.Cells(r, 8), False
+            ElseIf catalogoSAP.Exists(material) Then
+                ws.Cells(r, 7).Value = DescripcionMaterialSAP(catalogoSAP, material)
+                ws.Cells(r, 8).Value = "OK"
+                MarcarValidacionMM60 ws.Cells(r, 8), True
+            Else
+                ws.Cells(r, 8).Value = "NO EXISTE EN MM60"
+                MarcarValidacionMM60 ws.Cells(r, 8), False
+            End If
+        End If
+    Next r
+End Sub
+
+Private Sub MarcarValidacionMM60(ByVal celda As Range, ByVal esValida As Boolean)
+    celda.Font.Bold = True
+    If esValida Then
+        celda.Interior.Color = RGB(230, 244, 234)
+        celda.Font.Color = RGB(19, 122, 69)
+    Else
+        celda.Interior.Color = RGB(253, 226, 226)
+        celda.Font.Color = RGB(164, 22, 43)
+    End If
+End Sub
+
+Private Function SeleccionarArchivoMM60() As String
+    Dim selector As Object
+
+    Set selector = Application.FileDialog(3)
+    With selector
+        .Title = "Selecciona la exportación MM60 de SAP"
+        .AllowMultiSelect = False
+        .Filters.Clear
+        .Filters.Add "Exportación MM60", "*.xls;*.txt;*.csv"
+        .Filters.Add "Todos los archivos", "*.*"
+        If .Show <> -1 Then Exit Function
+        SeleccionarArchivoMM60 = CStr(.SelectedItems(1))
+    End With
+End Function
+
+Private Function CargarCatalogoMM60DesdeArchivo(ByVal ws As Worksheet, _
+                                                ByVal ruta As String) As Long
+    Dim contenido As String
+    Dim lineas As Variant
+    Dim campos As Variant
+    Dim salida() As Variant
+    Dim lineaEncabezado As Long
+    Dim i As Long
+    Dim fila As Long
+    Dim total As Long
+    Dim ultima As Long
+    Dim material As String
+    Dim okNumero As Boolean
+    Dim numero As Double
+    Dim idxCentro As Long
+    Dim idxMaterial As Long
+    Dim idxTexto As Long
+    Dim idxPrecio As Long
+    Dim idxPor As Long
+    Dim idxClaseValor As Long
+    Dim idxUMB As Long
+    Dim idxCatVa As Long
+    Dim idxGrupo As Long
+    Dim idxGCp As Long
+    Dim idxTipo As Long
+    Dim idxCaP As Long
+    Dim idxPrc As Long
+    Dim idxCreado As Long
+    Dim idxABC As Long
+    Dim idxFecha As Long
+    Dim idxMoneda As Long
+
+    contenido = LeerTextoMM60(ruta)
+    contenido = Replace(contenido, vbCrLf, vbLf)
+    contenido = Replace(contenido, vbCr, vbLf)
+    lineas = Split(contenido, vbLf)
+    lineaEncabezado = BuscarLineaEncabezadoMM60(lineas)
+    If lineaEncabezado < 0 Then
+        Err.Raise vbObjectError + 1030, , _
+                  "El archivo no contiene los encabezados esperados de MM60."
+    End If
+
+    campos = Split(CStr(lineas(lineaEncabezado)), vbTab)
+    idxCentro = BuscarIndiceMM60(campos, Array("CE"))
+    idxMaterial = BuscarIndiceMM60(campos, Array("MATERIAL"))
+    idxTexto = BuscarIndiceMM60(campos, Array("TEXTO BREVE DE MATERIAL"))
+    idxPrecio = BuscarIndiceMM60(campos, Array("PRECIO"))
+    idxPor = BuscarIndiceMM60(campos, Array("POR"))
+    idxClaseValor = BuscarIndiceMM60(campos, Array("CL VALOR"))
+    idxUMB = BuscarIndiceMM60(campos, Array("UMB"))
+    idxCatVa = BuscarIndiceMM60(campos, Array("CATVA"))
+    idxGrupo = BuscarIndiceMM60(campos, Array("GRUPO ART"))
+    idxGCp = BuscarIndiceMM60(campos, Array("GCP"))
+    idxTipo = BuscarIndiceMM60(campos, Array("TPMT"))
+    idxCaP = BuscarIndiceMM60(campos, Array("CAP"))
+    idxPrc = BuscarIndiceMM60(campos, Array("PRC"))
+    idxCreado = BuscarIndiceMM60(campos, Array("CREADO POR"))
+    idxABC = BuscarIndiceMM60(campos, Array("ABC"))
+    idxFecha = BuscarIndiceMM60(campos, Array("ULT MODIF"))
+    idxMoneda = BuscarIndiceMM60(campos, Array("MON"))
+
+    If idxMaterial < 0 Or idxTexto < 0 Then
+        Err.Raise vbObjectError + 1031, , _
+                  "No se localizaron las columnas Material y Texto breve de material."
+    End If
+
+    For i = lineaEncabezado + 1 To UBound(lineas)
+        campos = Split(CStr(lineas(i)), vbTab)
+        material = NormalizarClave(CampoMM60(campos, idxMaterial))
+        If Len(material) > 0 And IsNumeric(material) Then total = total + 1
+    Next i
+    If total = 0 Then
+        Err.Raise vbObjectError + 1032, , "El archivo MM60 no contiene materiales."
+    End If
+
+    ReDim salida(1 To total, 1 To 17)
+    fila = 0
+    For i = lineaEncabezado + 1 To UBound(lineas)
+        campos = Split(CStr(lineas(i)), vbTab)
+        material = NormalizarClave(CampoMM60(campos, idxMaterial))
+        If Len(material) > 0 And IsNumeric(material) Then
+            fila = fila + 1
+            salida(fila, 1) = TextoSeguro(CampoMM60(campos, idxCentro))
+            salida(fila, 2) = material
+            salida(fila, 3) = TextoSeguro(CampoMM60(campos, idxTexto))
+
+            numero = NumeroSeguro(CampoMM60(campos, idxPrecio), okNumero)
+            If okNumero Then salida(fila, 4) = numero Else salida(fila, 4) = vbNullString
+            numero = NumeroSeguro(CampoMM60(campos, idxPor), okNumero)
+            If okNumero Then salida(fila, 5) = numero Else salida(fila, 5) = vbNullString
+
+            salida(fila, 6) = TextoSeguro(CampoMM60(campos, idxClaseValor))
+            salida(fila, 7) = TextoSeguro(CampoMM60(campos, idxUMB))
+            salida(fila, 8) = TextoSeguro(CampoMM60(campos, idxCatVa))
+            salida(fila, 9) = TextoSeguro(CampoMM60(campos, idxGrupo))
+            salida(fila, 10) = TextoSeguro(CampoMM60(campos, idxGCp))
+            salida(fila, 11) = TextoSeguro(CampoMM60(campos, idxTipo))
+            salida(fila, 12) = TextoSeguro(CampoMM60(campos, idxCaP))
+            salida(fila, 13) = TextoSeguro(CampoMM60(campos, idxPrc))
+            salida(fila, 14) = TextoSeguro(CampoMM60(campos, idxCreado))
+            salida(fila, 15) = TextoSeguro(CampoMM60(campos, idxABC))
+            salida(fila, 16) = FechaMM60(CampoMM60(campos, idxFecha))
+            salida(fila, 17) = TextoSeguro(CampoMM60(campos, idxMoneda))
+        End If
+    Next i
+
+    ultima = MaxLong(UltimaFila(ws, COL_MATERIAL_MM60), FILA_DATOS_MM60)
+    ws.Range(ws.Cells(FILA_DATOS_MM60, COL_CENTRO_MM60), _
+             ws.Cells(ultima, COL_MONEDA_MM60)).ClearContents
+    ws.Cells(FILA_DATOS_MM60, COL_CENTRO_MM60).Resize(total, 17).Value2 = salida
+    ws.Range("J2").Value = "Última importación MM60"
+    ws.Range("K2").Value = Now
+    ws.Range("J3").Value = "Archivo origen"
+    ws.Range("K3").Value = ruta
+    ws.Range("K2").NumberFormat = "dd-mmm-yyyy hh:mm"
+    ws.Range("M6:M" & 5 + total).NumberFormat = "#,##0.00"
+    ws.Range("Y6:Y" & 5 + total).NumberFormat = "dd-mmm-yyyy"
+
+    CargarCatalogoMM60DesdeArchivo = total
+End Function
+
+Private Function LeerTextoMM60(ByVal ruta As String) As String
+    Dim texto As String
+
+    texto = LeerArchivoConCharset(ruta, "unicode")
+    If InStr(1, texto, "Texto breve de material", vbTextCompare) = 0 Then
+        texto = LeerArchivoConCharset(ruta, "utf-8")
+    End If
+    If InStr(1, texto, "Texto breve de material", vbTextCompare) = 0 Then
+        texto = LeerArchivoConCharset(ruta, "windows-1252")
+    End If
+    LeerTextoMM60 = texto
+End Function
+
+Private Function LeerArchivoConCharset(ByVal ruta As String, _
+                                       ByVal charset As String) As String
+    Dim flujo As Object
+
+    Set flujo = CreateObject("ADODB.Stream")
+    flujo.Type = 2
+    flujo.Charset = charset
+    flujo.Open
+    flujo.LoadFromFile ruta
+    LeerArchivoConCharset = flujo.ReadText
+    flujo.Close
+End Function
+
+Private Function BuscarLineaEncabezadoMM60(ByVal lineas As Variant) As Long
+    Dim i As Long
+    Dim texto As String
+
+    BuscarLineaEncabezadoMM60 = -1
+    For i = LBound(lineas) To UBound(lineas)
+        texto = CStr(lineas(i))
+        If InStr(1, texto, "Material", vbTextCompare) > 0 And _
+           InStr(1, texto, "Texto breve de material", vbTextCompare) > 0 Then
+            BuscarLineaEncabezadoMM60 = i
+            Exit Function
+        End If
+    Next i
+End Function
+
+Private Function BuscarIndiceMM60(ByVal campos As Variant, _
+                                  ByVal opciones As Variant) As Long
+    Dim i As Long
+    Dim opcion As Variant
+    Dim actual As String
+    Dim esperado As String
+
+    BuscarIndiceMM60 = -1
+    For i = LBound(campos) To UBound(campos)
+        actual = NormalizarEncabezado(CStr(campos(i)))
+        For Each opcion In opciones
+            esperado = NormalizarEncabezado(CStr(opcion))
+            If actual = esperado Then
+                BuscarIndiceMM60 = i
+                Exit Function
+            End If
+        Next opcion
+    Next i
+End Function
+
+Private Function CampoMM60(ByVal campos As Variant, ByVal indice As Long) As Variant
+    If indice >= LBound(campos) And indice <= UBound(campos) Then
+        CampoMM60 = campos(indice)
+    Else
+        CampoMM60 = vbNullString
+    End If
+End Function
+
+Private Function FechaMM60(ByVal valor As Variant) As Variant
+    Dim texto As String
+    Dim partes As Variant
+    Dim dia As Long
+    Dim mes As Long
+    Dim anio As Long
+
+    texto = Trim$(TextoSeguro(valor))
+    If Len(texto) = 0 Then
+        FechaMM60 = vbNullString
+        Exit Function
+    End If
+
+    texto = Replace(texto, "/", ".")
+    texto = Replace(texto, "-", ".")
+    partes = Split(texto, ".")
+    If UBound(partes) = 2 Then
+        dia = CLng(Val(partes(0)))
+        mes = CLng(Val(partes(1)))
+        anio = CLng(Val(partes(2)))
+        If anio < 100 Then anio = 2000 + anio
+        If dia >= 1 And dia <= 31 And mes >= 1 And mes <= 12 And anio >= 1900 Then
+            FechaMM60 = DateSerial(anio, mes, dia)
+            Exit Function
+        End If
+    End If
+
+    If IsDate(valor) Then FechaMM60 = CDate(valor) Else FechaMM60 = vbNullString
 End Function
 
 Private Sub RegistrarLog(ByVal registros As Long, ByVal conciliados As Long, _
@@ -1400,7 +1892,7 @@ Private Function DetectarPrimeraFilaDatos(ByVal ws As Worksheet, _
     Next r
 
     Err.Raise vbObjectError + 1010, , _
-              "No se encontr" & ChrW(243) & " el encabezado de la clave en la columna " & _
+              "No se encontró el encabezado de la clave en la columna " & _
               columnaClave & " de la hoja '" & ws.Name & "'."
 End Function
 
@@ -1481,13 +1973,13 @@ Private Function NormalizarNombreHoja(ByVal nombre As String) As String
 End Function
 
 Private Function QuitarAcentos(ByVal texto As String) As String
-    texto = Replace(texto, "" & ChrW(193) & "", "A")
-    texto = Replace(texto, "" & ChrW(201) & "", "E")
-    texto = Replace(texto, "" & ChrW(205) & "", "I")
-    texto = Replace(texto, "" & ChrW(211) & "", "O")
-    texto = Replace(texto, "" & ChrW(218) & "", "U")
-    texto = Replace(texto, "" & ChrW(220) & "", "U")
-    texto = Replace(texto, "" & ChrW(209) & "", "N")
+    texto = Replace(texto, "Á", "A")
+    texto = Replace(texto, "É", "E")
+    texto = Replace(texto, "Í", "I")
+    texto = Replace(texto, "Ó", "O")
+    texto = Replace(texto, "Ú", "U")
+    texto = Replace(texto, "Ü", "U")
+    texto = Replace(texto, "Ñ", "N")
     QuitarAcentos = texto
 End Function
 
@@ -1577,7 +2069,7 @@ Private Function EsNumeroCanonico(ByVal texto As String) As Boolean
             puntos = puntos + 1
             If puntos > 1 Then Exit Function
         ElseIf (caracter = "-" Or caracter = "+") And i = 1 Then
-            ' Signo permitido unicamente al inicio.
+            ' Signo permitido únicamente al inicio.
         Else
             Exit Function
         End If
@@ -1668,7 +2160,7 @@ Private Sub EscribirMatriz(ByVal celdaInicial As Range, ByVal filas As Variant)
     For i = LBound(filas) To UBound(filas)
         filaDatos = filas(i)
         If UBound(filaDatos) - LBound(filaDatos) + 1 <> numeroColumnas Then
-            Err.Raise vbObjectError + 1020, , "La matriz contiene filas con distinto n" & ChrW(250) & "mero de columnas."
+            Err.Raise vbObjectError + 1020, , "La matriz contiene filas con distinto número de columnas."
         End If
         For j = LBound(filaDatos) To UBound(filaDatos)
             matriz(i - LBound(filas) + 1, j - LBound(filaDatos) + 1) = filaDatos(j)

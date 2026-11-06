@@ -12,17 +12,24 @@ sap-automation-plant/
 ├── macros/
 │   ├── modReporteSAP_V6_5.bas        ← reporte de eficiencia: REP2, producción, PDP, paros (4,679 líneas)
 │   ├── modComentariosParosSAP_v2.bas ← comentarios TOP 3 de paros (791 líneas)
-│   ├── modConciliacionRobusta.bas    ← conciliación envases/cajas vs MB51 (1,683 líneas)
+│   ├── modConciliacionRobusta.bas    ← conciliación envases/cajas vs MB51 + catálogo MM60 (2,175 líneas)
+│   ├── modConsolidarMB51.bas         ← consolidador y limpiador de exportaciones MB51, v3 (717 líneas)
+│   ├── modConciliarTransferencias.bas ← conciliación de transferencias / rutas, con instalador (1,096 líneas)
+│   ├── modInstaladorConciliacion.bas ← instala modConciliarTransferencias y reasigna botones (75 líneas)
 │   ├── modMIGO_BajasEPP.bas          ← bajas de EPP en MIGO, v3 (1,113 líneas)
+│   ├── modMIGO_BajasEPP_LayoutRobusto.bas ← variante multiusuario de bajas EPP, layout por nombre de columna (902 líneas)
 │   ├── modCorreosNotasCredito.bas    ← correos masivos de notas de crédito, v3 (1,179 líneas)
-│   └── modConsolidarMB51.bas         ← consolidador MB51 (PENDIENTE: hoy es un marcador de 39 líneas)
+│   ├── modCorreosDistribuidorDinamico.bas ← correos masivos con asunto y carátula por distribuidor (1,096 líneas)
+│   ├── modConvertirSAP_EPP.bas       ← export SAP a template EPP (363 líneas)
+│   ├── modSAP_a_TXT_Kiosko_EPP.bas   ← export SAP a TXT para kiosko EPP (505 líneas)
+│   └── modConvertirSAP_EPP_CargaLimpia.bas ← export SAP a archivo de carga limpia EPP (398 líneas)
 ├── docs/
 │   ├── layout-bajas-epp.md
 │   └── layout-correos-notas-credito.md
 └── samples/                          ← CSV con datos ficticios
 ```
 
-**Valores a configurar** en los módulos de eficiencia y paros (constantes al inicio del módulo): `CENTRO = "<CENTRO>"`, las transacciones Z del reporte (`ZREP_EFICIENCIA`, `ZREP_PAROS`, `ZREP_PRODUCCION`) y sus variantes (`/VAR_EFIC`, `/VAR_PAROS`, `/VAR_PROD`). En conciliación se configuran los materiales `<MATERIAL_ENVASE>` y `<MATERIAL_CAJA>` de la hoja Configuración. Son marcadores públicos: sustitúyelos por los valores reales de tu sistema.
+**Valores a configurar** en los módulos de eficiencia y paros (constantes al inicio del módulo): `CENTRO = "<CENTRO>"`, las transacciones Z del reporte (`ZREP_EFICIENCIA`, `ZREP_PAROS`, `ZREP_PRODUCCION`) y sus variantes (`/VAR_EFIC`, `/VAR_PAROS`, `/VAR_PROD`). En conciliación se configuran los materiales `<MATERIAL_ENVASE>` y `<MATERIAL_CAJA>` de la hoja Configuración. En la cadena de conversión SAP a EPP se configuran `<CENTRO>`, `<PLANTA>` y `<VARIANTE>` en `ConvertirPlanta`, y en la variante multiusuario de MIGO el almacén `<ALMACEN>`. Son marcadores públicos: sustitúyelos por los valores reales de tu sistema.
 
 ## Módulos
 
@@ -94,9 +101,7 @@ Una macro (`ConciliarTodo`) cruza los reportes de proveedor (hojas Proveedor Env
 
 **API pública:** ConciliarTodo.
 
-### modConsolidarMB51.bas — Consolidador MB51 (pendiente)
-
-> En este repositorio el archivo todavía es un marcador; el código completo está pendiente de publicar.
+### modConsolidarMB51.bas — Consolidador MB51 (v3)
 
 Consolida y limpia exportaciones de la transacción MB51 (movimientos de material).
 
@@ -108,6 +113,46 @@ Consolida y limpia exportaciones de la transacción MB51 (movimientos de materia
 - Tolera celdas con errores de Excel (#N/A, #VALUE!).
 
 **API pública:** Consolidar_MB51.
+
+### modConciliarTransferencias.bas — Conciliación de transferencias / rutas
+
+Cruza Liquidación de Ruta contra Detalle Cliente DA - Vendedor y concilia por importe con búsqueda dinámica de subconjuntos (con límite de estados para no explotar en combinaciones).
+
+- Lee las hojas una sola vez en arreglos y trabaja con Currency/centavos para no perder por decimales.
+- `ConciliarConMismoSignoOptimizado` concilia movimientos del mismo signo; `RestablecerDatos` y `GenerarEstadisticas` dejan el libro listo para la siguiente corrida.
+- `ValidarDatosAntesProcesar` revisa los datos antes de tocar nada.
+
+**API pública:** ConciliarTransferenciasOptimizado, ConciliarConMismoSignoOptimizado, RestablecerDatos, ValidarDatosAntesProcesar, GenerarEstadisticas.
+
+**Setup:** `modInstaladorConciliacion.bas` (`Instalar_Conciliacion_Limpia`) importa el módulo, elimina los módulos viejos y reasigna los botones a las macros nuevas.
+
+### modConvertirSAP_EPP.bas, modSAP_a_TXT_Kiosko_EPP.bas y modConvertirSAP_EPP_CargaLimpia.bas — Export SAP a EPP
+
+Cadena de tres módulos que convierte un export de SAP a los tres formatos que usa la operación de EPP:
+
+1. **Template EPP** (`Convertir_LibroSAP_A_TemplateEPP`): pasa el export al template EPP SAP, con catálogo de tallas.
+2. **TXT para kiosko** (`Crear_TXT_Kiosko_EPP_Desde_SAP`): genera el TXT que lee el kiosko de entrega.
+3. **Carga limpia** (`Convertir_LibroSAP_A_CargaLimpia_EPP`): genera el archivo de carga sin basura para el sistema.
+
+La planta se normaliza en `ConvertirPlanta` con los marcadores `<CENTRO>`, `<PLANTA>` y `<VARIANTE>`: configúralos con tus valores antes de usarla.
+
+### modCorreosDistribuidorDinamico.bas — Correos masivos por distribuidor
+
+Variante de correos masivos de notas de crédito con el distribuidor como eje: asunto, carátula y detalle se filtran por el mismo distribuidor, con textos configurables para primera, segunda, tercera y cuarta entrega.
+
+- Respeta el mensaje capturado en la fila cuando viene escrito a mano.
+- El ID de la hoja Correos puede seguir siendo consecutivo.
+
+**API pública:** PrepararConfiguracionCorreos, ValidarFilasCorreos, GenerarOCrearCorreosMasivos.
+
+### modMIGO_BajasEPP_LayoutRobusto.bas — Bajas de EPP, variante multiusuario
+
+Variante de bajas de EPP en MIGO pensada para uso multiusuario: no depende de posiciones fijas de columnas, resuelve el layout por nombre de columna (`Normalizar_Layout_MIGO`) y valida antes de procesar.
+
+- Complementa a `modMIGO_BajasEPP.bas` (v3), que sigue siendo la versión completa con `Preparar_Bajas_Desde_App` y `Registrar_Contabilizacion_Manual`. Esta variante no contabiliza y no trae modo SIMULACION/VERIFICAR: úsala para validar el layout y capturar, y deja la contabilización en v3 o a mano.
+- El almacén de respaldo es el marcador `<ALMACEN>`: configúralo con tu valor.
+
+**API pública:** Validar_Bajas_EPP, Procesar_Bajas_EPP_MIGO, Normalizar_Layout_MIGO, Probar_Conexion_SAP, Diagnosticar_Layout_MIGO.
 
 ## Caso de estudio
 
