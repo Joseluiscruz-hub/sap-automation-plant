@@ -1,10 +1,15 @@
-Attribute VB_Name = "modMIGO_BajasEPP"
+﻿Attribute VB_Name = "modMIGO_BajasEPP"
 Option Explicit
 
 ' ============================================================
 ' BAJAS DE EPP EN MIGO  (A07 Salida de mercancias / R10 Otros / mov. 201 a CeCo)
 ' Autor: Jose Luis Cruz Prieto
-' Version 3.0
+' Version 3.1
+'
+' v3.1: fusionado el layout robusto de la variante multiusuario:
+'   Normalizar_Layout_MIGO reordena la tabla de posiciones al orden canonico.
+'   TablaItems busca la tabla por nombre y, si cambia, recursivamente por GOITEM.
+'   NombreColumna revisa las primeras 3 filas visibles, no solo la fila 0.
 '
 ' Flujo:
 '   1) Pegar el export de la app (con encabezados) en PEGAR_APP.
@@ -17,7 +22,7 @@ Option Explicit
 '   5) Contabilizar a mano en MIGO y registrar el documento con
 '      Registrar_Contabilizacion_Manual.
 '
-' Utilerias: Probar_Conexion_SAP, Diagnosticar_Layout_MIGO.
+' Utilerias: Probar_Conexion_SAP, Diagnosticar_Layout_MIGO, Normalizar_Layout_MIGO.
 '
 ' Toda la configuracion vive en la hoja CONFIG (columna A = parametro,
 ' columna B = valor). Ver docs/layout-bajas-epp.md.
@@ -506,6 +511,44 @@ End Sub
 ' SAP
 ' ============================================================
 
+' Reordena las columnas de la tabla de posiciones de MIGO al orden canonico
+' (Material, Cantidad, Almacen, CECO, Texto, Destinatario) para esta sesion.
+' Si faltan columnas, abre Configurar layout para agregarlas.
+' Fusionado desde la variante multiusuario en v3.1.
+Public Sub Normalizar_Layout_MIGO()
+    Dim session As Object, tbl As Object
+    Dim desired As Variant, permutation As String, missing As String
+
+    On Error GoTo ErrHandler
+    mTimeoutSeg = Val(Cfg("SAP_TIMEOUT_SEG", "60"))
+    If mTimeoutSeg <= 0 Then mTimeoutSeg = 60
+    Set session = ObtenerSesionSAP(CfgRequerido("SAP_SISTEMA"), CfgRequerido("SAP_MANDANTE"))
+    If session.Info.Transaction <> "MIGO" Then PrepararMigo session
+
+    Set tbl = TablaItems(session)
+    desired = Array("GOITEM-MATNR", "GOITEM-ERFMG", "GOITEM-LGORT", "GOITEM-KOSTL", "GOITEM-SGTXT", "GOITEM-WEMPF")
+    permutation = BuildMigoPermutation(tbl, desired, missing)
+
+    If Len(missing) > 0 Then
+        On Error Resume Next
+        tbl.ConfigureLayout
+        On Error GoTo ErrHandler
+        MsgBox "El layout no contiene todas las columnas requeridas:" & vbCrLf & vbCrLf & _
+               missing & vbCrLf & vbCrLf & _
+               "Se intento abrir Configurar layout. Agrega las columnas faltantes y vuelve a ejecutar esta macro.", _
+               vbExclamation, "MIGO - Layout incompleto"
+        Exit Sub
+    End If
+
+    tbl.ReorderTable permutation
+    MsgBox "Layout MIGO normalizado para esta sesion." & vbCrLf & _
+           "Orden principal: Material, Cantidad, Almacen, CECO, Texto y Destinatario.", _
+           vbInformation, "MIGO - Layout OK"
+    Exit Sub
+ErrHandler:
+    MsgBox "No se pudo normalizar MIGO: " & Err.Description, vbCritical
+End Sub
+
 Private Function ObtenerSesionSAP(ByVal sid As String, ByVal mandt As String) As Object
     Dim sapGui As Object, app As Object, conn As Object, ses As Object, vistas As String
 
@@ -599,19 +642,161 @@ Private Sub SetCampoCabecera(ByVal session As Object, ByVal nombre As String, By
     EsperarSAP session
 End Sub
 
+' Busca recursivamente un GuiTableControl cuyo nombre o campo de tabla
+' contenga el token (p. ej. "GOITEM"). Respaldo cuando FindByName falla (v3.1).
+Private Function FindTableByToken(ByVal parentObj As Object, ByVal token As String) As Object
+    Dim i As Long
+    Dim child As Object
+    Dim found As Object
+    Dim tipo As String
+    Dim nombre As String
+    Dim tableField As String
+    Dim esContainer As Boolean
+
+    On Error GoTo Salir
+
+    For i = 0 To parentObj.Children.Count - 1
+        Set child = parentObj.Children.ElementAt(i)
+
+        tipo = ""
+        nombre = ""
+        tableField = ""
+        esContainer = False
+
+        On Error Resume Next
+        tipo = UCase$(CStr(child.Type))
+        nombre = UCase$(CStr(child.Name))
+        tableField = UCase$(CStr(child.TableFieldName))
+        esContainer = CBool(child.ContainerType)
+        On Error GoTo Salir
+
+        If tipo = "GUITABLECONTROL" Then
+            If InStr(1, nombre, UCase$(token), vbTextCompare) > 0 Or _
+               InStr(1, tableField, UCase$(token), vbTextCompare) > 0 Then
+                Set FindTableByToken = child
+                Exit Function
+            End If
+        End If
+
+        If esContainer Then
+            Set found = FindTableByToken(child, token)
+            If Not found Is Nothing Then
+                Set FindTableByToken = found
+                Exit Function
+            End If
+        End If
+    Next i
+
+Salir:
+End Function
+
+' Devuelve el indice de la columna con ese nombre tecnico, revisando las
+' primeras 3 filas visibles. -1 si no existe (v3.1).
+Private Function FindMigoColumn(ByVal tbl As Object, ByVal technicalName As String) As Long
+    Dim c As Long
+    Dim r As Long
+    Dim maxRows As Long
+    Dim cell As Object
+    Dim nm As String
+    Dim wanted As String
+
+    FindMigoColumn = -1
+    wanted = UCase$(technicalName)
+
+    On Error Resume Next
+    maxRows = tbl.VisibleRowCount
+    On Error GoTo 0
+    If maxRows <= 0 Then maxRows = 1
+    If maxRows > 3 Then maxRows = 3
+
+    For c = 0 To tbl.Columns.Count - 1
+        For r = 0 To maxRows - 1
+            Set cell = Nothing
+            nm = ""
+
+            On Error Resume Next
+            Set cell = tbl.GetCell(r, c)
+            If Not cell Is Nothing Then nm = UCase$(CStr(cell.Name))
+            On Error GoTo 0
+
+            If Len(nm) > 0 Then
+                If nm = wanted Or Right$(nm, Len(wanted)) = wanted Then
+                    FindMigoColumn = c
+                    Exit Function
+                End If
+            End If
+        Next r
+    Next c
+End Function
+
+' Arma la permutacion "0 2 1 ..." para ReorderTable: primero las columnas
+' deseadas en orden, luego el resto sin perderlas. Devuelve en missing las
+' columnas deseadas que no existen (v3.1).
+Private Function BuildMigoPermutation(ByVal tbl As Object, ByVal desiredFields As Variant, _
+                                      ByRef missing As String) As String
+    Dim used() As Boolean
+    Dim i As Long
+    Dim c As Long
+    Dim col As Long
+    Dim result As String
+
+    ReDim used(0 To tbl.Columns.Count - 1)
+
+    For i = LBound(desiredFields) To UBound(desiredFields)
+        col = FindMigoColumn(tbl, CStr(desiredFields(i)))
+        If col >= 0 Then
+            If Not used(col) Then
+                If Len(result) > 0 Then result = result & " "
+                result = result & CStr(col)
+                used(col) = True
+            End If
+        Else
+            If Len(missing) > 0 Then missing = missing & vbCrLf
+            missing = missing & "- " & CStr(desiredFields(i))
+        End If
+    Next i
+
+    ' Mantener el resto de las columnas sin perderlas.
+    For c = 0 To tbl.Columns.Count - 1
+        If Not used(c) Then
+            If Len(result) > 0 Then result = result & " "
+            result = result & CStr(c)
+        End If
+    Next c
+
+    BuildMigoPermutation = result
+End Function
+
 Private Function TablaItems(ByVal session As Object) As Object
+    Dim usr As Object
+
     On Error Resume Next
     Set TablaItems = session.findById("wnd[0]/usr").FindByName(NOMBRE_TABLA_ITEMS, "GuiTableControl")
     On Error GoTo 0
+    If Not TablaItems Is Nothing Then Exit Function
+
+    ' Respaldo (v3.1): el nombre de la tabla varia segun la version de MIGO.
+    ' Buscar recursivamente el GuiTableControl de GOITEM.
+    On Error Resume Next
+    Set usr = session.findById("wnd[0]/usr")
+    On Error GoTo 0
+    If Not usr Is Nothing Then Set TablaItems = FindTableByToken(usr, "GOITEM")
+
     If TablaItems Is Nothing Then
         Err.Raise ERR_FATAL, , "No encontre la tabla de posiciones de MIGO (" & NOMBRE_TABLA_ITEMS & ")."
     End If
 End Function
 
 Private Function NombreColumna(ByVal tbl As Object, ByVal c As Long) As String
-    On Error Resume Next
-    NombreColumna = UCase$(tbl.GetCell(0, c).Name)
-    On Error GoTo 0
+    Dim r As Long
+
+    ' La fila 0 puede venir vacia; revisar las primeras 3 filas visibles (v3.1).
+    For r = 0 To 2
+        On Error Resume Next
+        NombreColumna = UCase$(tbl.GetCell(r, c).Name)
+        On Error GoTo 0
+        If Len(NombreColumna) > 0 Then Exit Function
+    Next r
 End Function
 
 Private Sub CargarColumnas(ByVal session As Object)

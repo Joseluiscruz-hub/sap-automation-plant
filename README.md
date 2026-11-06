@@ -16,10 +16,8 @@ sap-automation-plant/
 │   ├── modConsolidarMB51.bas         ← consolidador y limpiador de exportaciones MB51, v3 (717 líneas)
 │   ├── modConciliarTransferencias.bas ← conciliación de transferencias / rutas, con instalador (1,096 líneas)
 │   ├── modInstaladorConciliacion.bas ← instala modConciliarTransferencias y reasigna botones (75 líneas)
-│   ├── modMIGO_BajasEPP.bas          ← bajas de EPP en MIGO, v3 (1,113 líneas)
-│   ├── modMIGO_BajasEPP_LayoutRobusto.bas ← variante multiusuario de bajas EPP, layout por nombre de columna (902 líneas)
+│   ├── modMIGO_BajasEPP.bas          ← bajas de EPP en MIGO, v3.1 con layout robusto integrado (1,298 líneas)
 │   ├── modCorreosNotasCredito.bas    ← correos masivos de notas de crédito, v3 (1,179 líneas)
-│   ├── modCorreosDistribuidorDinamico.bas ← correos masivos con asunto y carátula por distribuidor (1,096 líneas)
 │   ├── modConvertirSAP_EPP.bas       ← export SAP a template EPP (363 líneas)
 │   ├── modSAP_a_TXT_Kiosko_EPP.bas   ← export SAP a TXT para kiosko EPP (505 líneas)
 │   └── modConvertirSAP_EPP_CargaLimpia.bas ← export SAP a archivo de carga limpia EPP (398 líneas)
@@ -29,7 +27,7 @@ sap-automation-plant/
 └── samples/                          ← CSV con datos ficticios
 ```
 
-**Valores a configurar** en los módulos de eficiencia y paros (constantes al inicio del módulo): `CENTRO = "<CENTRO>"`, las transacciones Z del reporte (`ZREP_EFICIENCIA`, `ZREP_PAROS`, `ZREP_PRODUCCION`) y sus variantes (`/VAR_EFIC`, `/VAR_PAROS`, `/VAR_PROD`). En conciliación se configuran los materiales `<MATERIAL_ENVASE>` y `<MATERIAL_CAJA>` de la hoja Configuración. En la cadena de conversión SAP a EPP se configuran `<CENTRO>`, `<PLANTA>` y `<VARIANTE>` en `ConvertirPlanta`, y en la variante multiusuario de MIGO el almacén `<ALMACEN>`. Son marcadores públicos: sustitúyelos por los valores reales de tu sistema.
+**Valores a configurar** en los módulos de eficiencia y paros (constantes al inicio del módulo): `CENTRO = "<CENTRO>"`, las transacciones Z del reporte (`ZREP_EFICIENCIA`, `ZREP_PAROS`, `ZREP_PRODUCCION`) y sus variantes (`/VAR_EFIC`, `/VAR_PAROS`, `/VAR_PROD`). En conciliación se configuran los materiales `<MATERIAL_ENVASE>` y `<MATERIAL_CAJA>` de la hoja Configuración. En la cadena de conversión SAP a EPP se configuran `<CENTRO>`, `<PLANTA>` y `<VARIANTE>` en `ConvertirPlanta`. Son marcadores públicos: sustitúyelos por los valores reales de tu sistema.
 
 ## Módulos
 
@@ -60,7 +58,9 @@ Captura en lote las bajas de equipo de protección personal en MIGO (A07 / R10 /
 - **Seguridad:** `MODO = SIMULACION` (dry-run, no se conecta a SAP) o `VERIFICAR`. **Nunca contabiliza.** La contabilización se hace a mano y se registra con `Registrar_Contabilizacion_Manual`.
 - Columnas de MIGO por nombre técnico (GOITEM-MATNR, GOITEM-KOSTL…). Manejo de errores por fila con `Resume`, bitácora en LOG_SAP, y ScreenUpdating/Calculation siempre restaurados.
 
-**API pública:** Preparar_Bajas_Desde_App, Validar_Bajas_EPP, Procesar_Bajas_EPP_MIGO, Registrar_Contabilizacion_Manual, Probar_Conexion_SAP, Diagnosticar_Layout_MIGO.
+**API pública:** Preparar_Bajas_Desde_App, Validar_Bajas_EPP, Procesar_Bajas_EPP_MIGO, Registrar_Contabilizacion_Manual, Probar_Conexion_SAP, Diagnosticar_Layout_MIGO, Normalizar_Layout_MIGO.
+
+**v3.1 — layout robusto integrado:** la variante multiusuario de bajas EPP se fusionó en este módulo y ya no existe como archivo aparte. `Normalizar_Layout_MIGO` reordena la tabla de posiciones al orden canónico (Material, Cantidad, Almacén, CECO, Texto, Destinatario) y, si faltan columnas, abre Configurar layout para agregarlas. Además `TablaItems` ahora busca la tabla por nombre y, si el nombre cambia según la versión de MIGO, la busca recursivamente por GOITEM; y `NombreColumna` revisa las primeras 3 filas visibles en vez de solo la fila 0. Todo lo demás de v3.0 sigue igual: modos SIMULACION/VERIFICAR, nunca contabiliza solo.
 
 **Setup:** ver [docs/layout-bajas-epp.md](docs/layout-bajas-epp.md) y [samples/bajas-epp](samples/bajas-epp).
 
@@ -136,23 +136,8 @@ Cadena de tres módulos que convierte un export de SAP a los tres formatos que u
 
 La planta se normaliza en `ConvertirPlanta` con los marcadores `<CENTRO>`, `<PLANTA>` y `<VARIANTE>`: configúralos con tus valores antes de usarla.
 
-### modCorreosDistribuidorDinamico.bas — Correos masivos por distribuidor
+**Nota — variante por distribuidor fusionada:** la variante de correos con asunto y carátula por distribuidor ya no existe como archivo aparte: su comportamiento ya estaba en este v3 (distribuidor obligatorio por fila, asunto, carátula y detalle por distribuidor). Lo único que tenía la variante y que aquí NO se conservó, a propósito, fue usar el ID consecutivo como ordinal para tomar el distribuidor 1, 2, 3... de Resumen: si cambiaba el orden de Resumen, el correo de un distribuidor podía llevar los datos de otro. Por eso el distribuidor sigue siendo obligatorio por fila y validado contra Resumen.
 
-Variante de correos masivos de notas de crédito con el distribuidor como eje: asunto, carátula y detalle se filtran por el mismo distribuidor, con textos configurables para primera, segunda, tercera y cuarta entrega.
-
-- Respeta el mensaje capturado en la fila cuando viene escrito a mano.
-- El ID de la hoja Correos puede seguir siendo consecutivo.
-
-**API pública:** PrepararConfiguracionCorreos, ValidarFilasCorreos, GenerarOCrearCorreosMasivos.
-
-### modMIGO_BajasEPP_LayoutRobusto.bas — Bajas de EPP, variante multiusuario
-
-Variante de bajas de EPP en MIGO pensada para uso multiusuario: no depende de posiciones fijas de columnas, resuelve el layout por nombre de columna (`Normalizar_Layout_MIGO`) y valida antes de procesar.
-
-- Complementa a `modMIGO_BajasEPP.bas` (v3), que sigue siendo la versión completa con `Preparar_Bajas_Desde_App` y `Registrar_Contabilizacion_Manual`. Esta variante no contabiliza y no trae modo SIMULACION/VERIFICAR: úsala para validar el layout y capturar, y deja la contabilización en v3 o a mano.
-- El almacén de respaldo es el marcador `<ALMACEN>`: configúralo con tu valor.
-
-**API pública:** Validar_Bajas_EPP, Procesar_Bajas_EPP_MIGO, Normalizar_Layout_MIGO, Probar_Conexion_SAP, Diagnosticar_Layout_MIGO.
 
 ## Caso de estudio
 
