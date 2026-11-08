@@ -10,26 +10,37 @@ Automatiza la operación diaria de una planta de producción: eficiencia, paros 
 sap-automation-plant/
 ├── README.md
 ├── macros/
-│   ├── modReporteSAP_V6_5.bas        ← reporte de eficiencia: REP2, producción, PDP, paros (4,679 líneas)
-│   ├── modComentariosParosSAP_v2.bas ← comentarios TOP 3 de paros (791 líneas)
-│   ├── modConciliacionRobusta.bas    ← conciliación envases/cajas vs MB51 + catálogo MM60 (2,175 líneas)
-│   ├── modConsolidarMB51.bas         ← consolidador y limpiador de exportaciones MB51, v3 (717 líneas)
-│   ├── modConciliarTransferencias.bas ← conciliación de transferencias / rutas, con instalador (1,096 líneas)
-│   ├── modInstaladorConciliacion.bas ← instala modConciliarTransferencias y reasigna botones (75 líneas)
-│   ├── modMIGO_BajasEPP.bas          ← bajas de EPP en MIGO, v3.1 con layout robusto integrado (1,298 líneas)
-│   ├── modCorreosNotasCredito.bas    ← correos masivos de notas de crédito, v3 (1,179 líneas)
-│   ├── modConvertirSAP_EPP.bas       ← export SAP a template EPP (363 líneas)
-│   ├── modSAP_a_TXT_Kiosko_EPP.bas   ← export SAP a TXT para kiosko EPP (505 líneas)
-│   └── modConvertirSAP_EPP_CargaLimpia.bas ← export SAP a archivo de carga limpia EPP (398 líneas)
+│   ├── modReporteSAP_V6_5.bas
+│   ├── modComentariosParosSAP_v2.bas
+│   ├── modConciliacionRobusta.bas
+│   ├── modConsolidarMB51.bas
+│   ├── modConciliarTransferencias.bas
+│   ├── modInstaladorConciliacion.bas
+│   ├── modMIGO_BajasEPP.bas
+│   ├── modCorreosNotasCredito.bas
+│   ├── modConvertirSAP_EPP.bas
+│   ├── modSAP_a_TXT_Kiosko_EPP.bas
+│   ├── modConvertirSAP_EPP_CargaLimpia.bas
+│   ├── modReclasificacionQA_SQ.bas      ← reclasificación QA→SQ (FI post-S/4HANA)
+│   └── modCompensacionF32.bas           ← compensación masiva F-32
 ├── docs/
 │   ├── layout-bajas-epp.md
 │   └── layout-correos-notas-credito.md
-└── samples/                          ← CSV con datos ficticios
+└── samples/
 ```
 
 **Valores a configurar** en los módulos de eficiencia y paros (constantes al inicio del módulo): `CENTRO = "<CENTRO>"`, las transacciones Z del reporte (`ZREP_EFICIENCIA`, `ZREP_PAROS`, `ZREP_PRODUCCION`) y sus variantes (`/VAR_EFIC`, `/VAR_PAROS`, `/VAR_PROD`). En conciliación se configuran los materiales `<MATERIAL_ENVASE>` y `<MATERIAL_CAJA>` de la hoja Configuración. En la cadena de conversión SAP a EPP se configuran `<CENTRO>`, `<PLANTA>` y `<VARIANTE>` en `ConvertirPlanta`. Son marcadores públicos: sustitúyelos por los valores reales de tu sistema.
 
 ## Módulos
+
+### modReclasificacionQA_SQ.bas y modCompensacionF32.bas — Saneamiento FI post-S/4HANA
+
+Versiones mejoradas del cockpit usado para regularizar la cartera detallista de México (sociedad F142, modelo DA) después de S/4HANA.
+
+- **modReclasificacionQA_SQ.bas**: punto de entrada `Reclasificar_NCA` para generar layouts QA→SQ por ruta (158k partidas, 77.5k documentos SQ).
+- **modCompensacionF32.bas**: `Compensarf32_VariosCte` para compensación masiva en F-32 (410k documentos RH/RT/X1, neto ≈ 0).
+
+Manejo de errores, validaciones previas y menos dependencia de code names de hoja. La lógica de lotes y secuencia SAP se conserva.
 
 ### modReporteSAP_V6_5.bas — Reporte de eficiencia
 
